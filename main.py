@@ -130,6 +130,21 @@ def log_transaction(conn, user_id, input_amt, output_amt, vault_bal):
                     total_won = total_won + ?''', 
                     (user_id, input_amt, output_amt, input_amt, output_amt))
 
+def log_attempt(user_id, formula, outcome):
+    """
+    Logs every Grand Solve attempt to a local file for analysis.
+    Format: [TIMESTAMP] USER_ID | OUTCOME | FORMULA
+    """
+    try:
+        with open("attempts.log", "a") as f:
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+            f.write(f"[{timestamp}] {user_id} | {outcome} | {formula}\n")
+        
+        # Also print to console so you see it in Railway logs
+        print(f">>> ATTEMPT: {user_id} tried '{formula}' -> {outcome}")
+    except Exception as e:
+        print(f"Error logging attempt: {e}")
+
 # --- GAME LOGIC ---
 
 def check_win_condition(conn, user_id: str) -> Tuple[bool, str]:
@@ -277,6 +292,9 @@ def grand_solve(req: SubmitRequest):
             if vault <= 0:
                 # Check Hall of Fame
                 winner = conn.execute('SELECT winner_id FROM hall_of_fame WHERE season_id=1').fetchone()
+                outcome = "LOCKED" if winner else "ERROR_SEASON_CLOSED"
+                log_attempt(req.user_id, submission, outcome)  # <--- LOG HERE
+                
                 if winner:
                     return {"outcome": "LOCKED", "message": f"ALREADY CLAIMED BY {winner[0]}"}
                 return {"outcome": "ERROR", "message": "SEASON CLOSED"}
@@ -297,13 +315,17 @@ def grand_solve(req: SubmitRequest):
                 log_transaction(conn, req.user_id, 0, prize, 0)
                 
                 conn.commit()
+                
+                log_attempt(req.user_id, submission, "GRAND_SOLVE_WIN") # <--- LOG HERE
                 return {"outcome": "GRAND_SOLVE", "payout": prize, "message": "SYSTEM COMPROMISED. SEASON ENDED."}
             
             else:
+                log_attempt(req.user_id, submission, "REJECTED") # <--- LOG HERE
                 return {"outcome": "REJECTED", "message": "INVALID KEY"}
 
         except sqlite3.IntegrityError:
             # This catches the race condition if two people submit at once
+            log_attempt(req.user_id, submission, "LOCKED_RACE_CONDITION") # <--- LOG HERE
             return {"outcome": "LOCKED", "message": "ALREADY CLAIMED BY ANOTHER PLAYER"}
 
 # BUG FIX 5: Complete Season Status Endpoint
