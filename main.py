@@ -1,73 +1,89 @@
 import sqlite3
 import time
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
-app = FastAPI(title="Beat the House: Season 1")
+app = FastAPI(title="Beat the House: Season 1 (Gold)")
 
-# --- CONFIGURATION & PERSISTENCE ---
-
-# Check if we are running on Railway (Volume mounted at /app/data)
-# If the folder exists, we use it for the DB. If not, we use local file.
+# --- CONFIGURATION ---
 if os.path.exists("/app/data"):
     DB_NAME = "/app/data/game.db"
-    print(">>> RUNNING IN PRODUCTION MODE (Persistent Volume)")
+    print(">>> PRODUCTION MODE: Persistent Volume")
 else:
     DB_NAME = "game.db"
-    print(">>> RUNNING IN LOCAL MODE")
+    print(">>> LOCAL MODE: Local File")
 
-# Game Constants
+# Constants
 SEED_VAULT_AMOUNT = 1000
-DEV_TAX = 0.10
-VAULT_SPLIT = 0.90
-PAYOUT_RATIO = 0.05
 COST_PER_PLAY = 10
 GRAND_SOLVE_ANSWER = "timestamp % 10 == 7 AND volume >= 3"
 
-# --- FRONTEND SETUP ---
+# Tuning
+LAYER2_THRESHOLD = 3         # Concurrent plays required
+WIN_COOLDOWN = 120           # Seconds between WINS
+PLAY_COOLDOWN = 5            # Seconds between PLAYS (Anti-Spam)
+BROADCAST_COOLDOWN = 300     # 5 Minutes per broadcast
+BROADCAST_LIMIT = 5          # Show last 5 messages
 
-# Create static directory if it doesn't exist (prevents startup errors)
+# --- FRONTEND SETUP ---
 if not os.path.exists("static"):
     os.makedirs("static")
-
-# Mount the static folder to serve CSS/JS/Images
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# --- DATABASE INITIALIZATION ---
+# --- DATABASE LAYER ---
 def init_db():
     with sqlite3.connect(DB_NAME) as conn:
         c = conn.cursor()
         
-        # 1. The Vault (Holds the money)
+        # 1. Vault
         c.execute('''CREATE TABLE IF NOT EXISTS vault (id INTEGER PRIMARY KEY, balance INTEGER)''')
-        # Seed the vault if empty
         c.execute('SELECT count(*) FROM vault')
         if c.fetchone()[0] == 0:
             c.execute('INSERT INTO vault (id, balance) VALUES (1, ?)', (SEED_VAULT_AMOUNT,))
             
-        # 2. Players (Tracks individual performance)
+        # 2. Players 
+        # Added last_play_time for anti-spam
         c.execute('''CREATE TABLE IF NOT EXISTS players 
-                     (user_id TEXT PRIMARY KEY, total_spent INTEGER, total_won INTEGER)''')
+                     (user_id TEXT PRIMARY KEY, total_spent INTEGER, total_won INTEGER, 
+                      last_win_time REAL DEFAULT 0, last_play_time REAL DEFAULT 0, 
+                      last_broadcast_time REAL DEFAULT 0)''')
         
-        # 3. Transactions (The Ledger)
+        # 3. Transactions
         c.execute('''CREATE TABLE IF NOT EXISTS transactions 
                      (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, 
                       input_amt INTEGER, output_amt INTEGER, vault_balance INTEGER, timestamp REAL)''')
         
-        # 4. Player Wins (Tracks difficulty level per player)
+        # 4. Player Difficulty Tracking
         c.execute('''CREATE TABLE IF NOT EXISTS player_wins 
                      (user_id TEXT PRIMARY KEY, l1_wins INTEGER DEFAULT 0)''')
+
+        # 5. Broadcasts
+        c.execute('''CREATE TABLE IF NOT EXISTS broadcasts 
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, message TEXT, timestamp REAL)''')
         
+        # 6. Hall of Fame (BUG FIX 3: Added PRIMARY KEY constraint on season_id for Highlander Lock)
+        c.execute('''CREATE TABLE IF NOT EXISTS hall_of_fame 
+                     (season_id INTEGER PRIMARY KEY, winner_id TEXT, payout INTEGER, win_date TEXT, method TEXT)''')
+        
+        # MIGRATION HELPER (Run once to add columns if they don't exist in old DB)
+        cols = [
+            ("last_win_time", "REAL DEFAULT 0"),
+            ("last_play_time", "REAL DEFAULT 0"),
+            ("last_broadcast_time", "REAL DEFAULT 0")
+        ]
+        for col, dtype in cols:
+            try: c.execute(f"ALTER TABLE players ADD COLUMN {col} {dtype}")
+            except: pass
+
         conn.commit()
 
-# Run DB init on startup
 init_db()
 
-# --- DATA MODELS ---
+# --- MODELS ---
 class PlayRequest(BaseModel):
     user_id: str
 
@@ -77,234 +93,268 @@ class PlayResponse(BaseModel):
     payout: int
     vault_balance: int
     message: str
+    season_active: bool = True
 
-class LeaderboardEntry(BaseModel):
+class BroadcastRequest(BaseModel):
     user_id: str
-    roi_percent: float
-    net_profit: int
+    message: str
 
 class SubmitRequest(BaseModel):
     user_id: str
     formula: str
 
-class SubmitResponse(BaseModel):
-    user_id: str
-    outcome: str
-    payout: int
-    message: str
-    next_step: str = ""
-
 # --- CORE HELPERS ---
 
-def get_vault_balance():
-    with sqlite3.connect(DB_NAME) as conn:
-        return conn.execute('SELECT balance FROM vault WHERE id=1').fetchone()[0]
+def get_vault_balance(conn):
+    return conn.execute('SELECT balance FROM vault WHERE id=1').fetchone()[0]
 
-def update_vault(amount_change):
-    with sqlite3.connect(DB_NAME) as conn:
-        conn.execute('UPDATE vault SET balance = balance + ? WHERE id=1', (amount_change,))
-        conn.commit()
-        return conn.execute('SELECT balance FROM vault WHERE id=1').fetchone()[0]
+def update_vault(conn, amount_change):
+    conn.execute('UPDATE vault SET balance = balance + ? WHERE id=1', (amount_change,))
+    # Ensure we return the new balance
+    return conn.execute('SELECT balance FROM vault WHERE id=1').fetchone()[0]
 
-def log_transaction(user_id, input_amt, output_amt, vault_bal):
-    with sqlite3.connect(DB_NAME) as conn:
-        # Log the raw transaction
-        conn.execute('''INSERT INTO transactions (user_id, input_amt, output_amt, vault_balance, timestamp) 
-                        VALUES (?, ?, ?, ?, ?)''', (user_id, input_amt, output_amt, vault_bal, time.time()))
-        
-        # Update player stats
-        conn.execute('''INSERT INTO players (user_id, total_spent, total_won) VALUES (?, ?, ?)
-                        ON CONFLICT(user_id) DO UPDATE SET 
-                        total_spent = total_spent + ?,
-                        total_won = total_won + ?''', 
-                        (user_id, input_amt, output_amt, input_amt, output_amt))
-        conn.commit()
+def calculate_hybrid_payout(current_vault):
+    # Hybrid: MIN(vault, MAX(20, 3% of Vault))
+    if current_vault <= 0: return 0
+    raw_payout = max(20, int(current_vault * 0.03))
+    return min(current_vault, raw_payout) # BUG FIX 1: Cap at current vault
 
-# --- GAME LOGIC (THE ALGORITHM) ---
+def log_transaction(conn, user_id, input_amt, output_amt, vault_bal):
+    conn.execute('''INSERT INTO transactions (user_id, input_amt, output_amt, vault_balance, timestamp) 
+                    VALUES (?, ?, ?, ?, ?)''', (user_id, input_amt, output_amt, vault_bal, time.time()))
+    
+    # Upsert player stats
+    conn.execute('''INSERT INTO players (user_id, total_spent, total_won) VALUES (?, ?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET 
+                    total_spent = total_spent + ?,
+                    total_won = total_won + ?''', 
+                    (user_id, input_amt, output_amt, input_amt, output_amt))
 
-def check_win_condition(user_id: str) -> Tuple[bool, str]:
-    with sqlite3.connect(DB_NAME) as conn:
-        # 1. Get Player's "Security Clearance" (Win Count)
-        row = conn.execute('SELECT l1_wins FROM player_wins WHERE user_id=?', (user_id,)).fetchone()
-        l1_wins = row[0] if row else 0
-        
-        # 2. Check The Universal Constant (Time must end in 7)
-        current_time = int(time.time())
-        time_aligned = str(current_time)[-1] == '7'
-        
-        # Immediate Fail if time is wrong
-        if not time_aligned:
-            return False, "Signal Missed. Align with the clock."
+# --- GAME LOGIC ---
 
-        # --- DIFFICULTY BRANCHING ---
-        
-        # LAYER 1: Simple Time Sync (Easy Mode)
-        # Active for the first 3 wins
-        if l1_wins < 3:
-            # Increment win count
-            conn.execute('''INSERT INTO player_wins (user_id, l1_wins) VALUES (?, 1) 
-                            ON CONFLICT(user_id) DO UPDATE SET l1_wins = l1_wins + 1''', (user_id,))
-            conn.commit()
-            return True, f"LAYER 1 BREACH CONFIRMED. (Wins: {l1_wins+1}/3)"
+def check_win_condition(conn, user_id: str) -> Tuple[bool, str]:
+    # 1. WIN COOLDOWN CHECK (Anti-Drain)
+    row = conn.execute('SELECT last_win_time FROM players WHERE user_id=?', (user_id,)).fetchone()
+    last_win = row[0] if row else 0
+    
+    # If they are in win cooldown, they can PLAY but cannot WIN
+    if (time.time() - last_win) < WIN_COOLDOWN:
+        remaining = int(WIN_COOLDOWN - (time.time() - last_win))
+        return False, f"ERR_HEAT_CRITICAL: WIN COOLDOWN ACTIVE ({remaining}s)"
 
-        # LAYER 2: High Velocity Injection (Hard Mode)
-        # Active after 3 wins. Requires Time Sync + Volume Spike.
-        
-        # Calculate Volume (Plays in last 10 seconds)
-        volume = conn.execute('SELECT COUNT(*) FROM transactions WHERE timestamp > ?', 
-                              (time.time() - 10,)).fetchone()[0]
-        threshold = 3 
-        
-        if volume >= threshold:
-            return True, f"LAYER 2 BREACH: Volume Surge ({volume}) + Time Sync Verified."
-        
-        # Fail Message for Layer 2
-        return False, f"Time aligned, but Network Entropy too low ({volume}/{threshold}). Flood the system."
+    # 2. TIME CHECK (Layer 1)
+    current_time = int(time.time())
+    if str(current_time)[-1] != '7':
+        return False, "SIGNAL_MISMATCH"
 
-# --- API ENDPOINTS ---
+    # 3. DIFFICULTY CHECK
+    p_row = conn.execute('SELECT l1_wins FROM player_wins WHERE user_id=?', (user_id,)).fetchone()
+    l1_wins = p_row[0] if p_row else 0
+    
+    # Layer 1 (Easy)
+    if l1_wins < 3:
+        conn.execute('''INSERT INTO player_wins (user_id, l1_wins) VALUES (?, 1) 
+                        ON CONFLICT(user_id) DO UPDATE SET l1_wins = l1_wins + 1''', (user_id,))
+        return True, f"PROTOCOL_BYPASS_SUCCESS"
+
+    # Layer 2 (Hard - Fixed Threshold 3)
+    volume = conn.execute('SELECT COUNT(*) FROM transactions WHERE timestamp > ?', 
+                          (time.time() - 10,)).fetchone()[0]
+    
+    if volume >= LAYER2_THRESHOLD:
+        return True, "ENTROPY_SURGE_CONFIRMED"
+    
+    return False, f"ERR_ENTROPY_INSUFFICIENT (Current: {volume}/{LAYER2_THRESHOLD})"
+
+# --- ENDPOINTS ---
 
 @app.get("/")
 async def read_root():
-    # Serves the Hacker Terminal Interface (index.html)
     return FileResponse('static/index.html')
 
 @app.post("/play", response_model=PlayResponse)
 def play_game(request: PlayRequest):
-    # 1. Process Input (The Buy-In)
-    vault_share = int(COST_PER_PLAY * VAULT_SPLIT)
-    current_vault = update_vault(vault_share)
-    
-    # 2. Check Algorithm
-    is_win, debug_msg = check_win_condition(request.user_id)
-    
-    payout = 0
-    outcome = "LOSS"
-    message = debug_msg 
-    
-    # 3. Process Payout (if Win)
-    if is_win:
-        payout = int(current_vault * PAYOUT_RATIO)
-        current_vault = update_vault(-payout)
-        outcome = "WIN"
-        message = debug_msg
+    with sqlite3.connect(DB_NAME) as conn:
+        # 1. Check Season Status
+        vault = get_vault_balance(conn)
+        if vault <= 0:
+            return {
+                "user_id": request.user_id, "outcome": "SEASON_ENDED", 
+                "payout": 0, "vault_balance": 0, 
+                "message": "VAULT DRAINED. SEASON OVER.", "season_active": False
+            }
 
-    # 4. Log Everything
-    log_transaction(request.user_id, COST_PER_PLAY, payout, current_vault)
-    
-    return {
-        "user_id": request.user_id,
-        "outcome": outcome,
-        "payout": payout,
-        "vault_balance": current_vault,
-        "message": message
-    }
+        # 2. Check PLAY Cooldown (Anti-Spam)
+        row = conn.execute('SELECT last_play_time FROM players WHERE user_id=?', (request.user_id,)).fetchone()
+        last_play = row[0] if row else 0
+        if (time.time() - last_play) < PLAY_COOLDOWN:
+            return {
+                "user_id": request.user_id, "outcome": "ERROR", 
+                "payout": 0, "vault_balance": vault, 
+                "message": "RATE_LIMITED: WAIT 5s", "season_active": True
+            }
 
-@app.post("/submit", response_model=SubmitResponse)
-def submit_grand_solve(request: SubmitRequest):
-    # Normalize input (remove spaces, lowercase)
-    submission = " ".join(request.formula.split()).lower()
+        # Update Play Time immediately
+        conn.execute('''INSERT INTO players (user_id, last_play_time, total_spent, total_won) 
+                        VALUES (?, ?, 0, 0) ON CONFLICT(user_id) 
+                        DO UPDATE SET last_play_time = ?''', 
+                        (request.user_id, time.time(), time.time()))
+
+        # 3. Process Entry Fee (House keeps 10%)
+        update_vault(conn, int(COST_PER_PLAY * 0.9)) 
+        
+        # 4. Check Win
+        is_win, msg = check_win_condition(conn, request.user_id)
+        
+        outcome = "LOSS"
+        payout = 0
+        
+        if is_win:
+            current_vault = get_vault_balance(conn)
+            # BUG FIX 1: Cap payout at current vault
+            raw_payout = calculate_hybrid_payout(current_vault)
+            payout = min(raw_payout, current_vault)
+            
+            update_vault(conn, -payout)
+            outcome = "WIN"
+            
+            # Update Win Timer
+            conn.execute('UPDATE players SET last_win_time = ? WHERE user_id=?', 
+                         (time.time(), request.user_id))
+        
+        # 5. Log
+        new_vault = get_vault_balance(conn)
+        log_transaction(conn, request.user_id, COST_PER_PLAY, payout, new_vault)
+        conn.commit()
+        
+        return {
+            "user_id": request.user_id, "outcome": outcome, 
+            "payout": payout, "vault_balance": new_vault, "message": msg,
+            "season_active": new_vault > 0
+        }
+
+@app.post("/broadcast")
+def send_broadcast(req: BroadcastRequest):
+    msg = req.message[:60].upper()
+    
+    with sqlite3.connect(DB_NAME) as conn:
+        # Rate Limit Check
+        row = conn.execute('SELECT last_broadcast_time FROM players WHERE user_id=?', (req.user_id,)).fetchone()
+        last_b = row[0] if row else 0
+        
+        if (time.time() - last_b) < BROADCAST_COOLDOWN:
+            return {"status": "ERROR", "message": f"COOLDOWN: WAIT {int(BROADCAST_COOLDOWN - (time.time() - last_b))}s"}
+
+        # BUG FIX 4: Handle new players correctly with default values
+        conn.execute('''INSERT INTO players (user_id, last_broadcast_time, total_spent, total_won) 
+                        VALUES (?, ?, 0, 0)
+                        ON CONFLICT(user_id) DO UPDATE SET last_broadcast_time = ?''', 
+                        (req.user_id, time.time(), time.time()))
+
+        conn.execute("INSERT INTO broadcasts (user_id, message, timestamp) VALUES (?, ?, ?)", 
+                     (req.user_id, msg, time.time()))
+        conn.commit()
+        
+    return {"status": "SENT"}
+
+@app.get("/broadcast/feed")
+def get_broadcasts():
+    with sqlite3.connect(DB_NAME) as conn:
+        rows = conn.execute('''SELECT user_id, message FROM broadcasts 
+                               ORDER BY id DESC LIMIT ?''', (BROADCAST_LIMIT,)).fetchall()
+    return {"feed": [{"user": r[0], "message": r[1]} for r in rows]}
+
+@app.post("/submit")
+def grand_solve(req: SubmitRequest):
+    submission = " ".join(req.formula.split()).lower()
     target = " ".join(GRAND_SOLVE_ANSWER.split()).lower()
     
+    # Connect with isolation level IMMEDIATE to lock db for this transaction
+    with sqlite3.connect(DB_NAME, isolation_level="IMMEDIATE") as conn:
+        try:
+            vault = get_vault_balance(conn)
+            
+            if vault <= 0:
+                # Check Hall of Fame
+                winner = conn.execute('SELECT winner_id FROM hall_of_fame WHERE season_id=1').fetchone()
+                if winner:
+                    return {"outcome": "LOCKED", "message": f"ALREADY CLAIMED BY {winner[0]}"}
+                return {"outcome": "ERROR", "message": "SEASON CLOSED"}
+
+            if submission == target:
+                prize = int(vault * 0.60)
+                
+                # BUG FIX 3: Constraint handling for Highlander Lock
+                # We try to insert FIRST. If it fails (Unique constraint), we know we lost the race.
+                conn.execute('''INSERT INTO hall_of_fame (season_id, winner_id, payout, win_date, method)
+                                VALUES (1, ?, ?, ?, 'GRAND_SOLVE')''', 
+                                (req.user_id, prize, time.ctime()))
+                
+                # BUG FIX 2: Explicitly set vault to 0 to prevent double drain
+                conn.execute('UPDATE vault SET balance = 0 WHERE id=1')
+                
+                # Record the specific win transaction
+                log_transaction(conn, req.user_id, 0, prize, 0)
+                
+                conn.commit()
+                return {"outcome": "GRAND_SOLVE", "payout": prize, "message": "SYSTEM COMPROMISED. SEASON ENDED."}
+            
+            else:
+                return {"outcome": "REJECTED", "message": "INVALID KEY"}
+
+        except sqlite3.IntegrityError:
+            # This catches the race condition if two people submit at once
+            return {"outcome": "LOCKED", "message": "ALREADY CLAIMED BY ANOTHER PLAYER"}
+
+# BUG FIX 5: Complete Season Status Endpoint
+@app.get("/season/status")
+def get_season_status():
     with sqlite3.connect(DB_NAME) as conn:
-        vault_bal = conn.execute('SELECT balance FROM vault WHERE id=1').fetchone()[0]
+        vault = get_vault_balance(conn)
         
-        # Check if season is already over
-        if vault_bal <= 0:
+        # Check for winner
+        row = conn.execute('SELECT winner_id, payout, win_date FROM hall_of_fame WHERE season_id=1').fetchone()
+        
+        if row:
             return {
-                "user_id": request.user_id, 
-                "outcome": "ERROR", 
-                "payout": 0,
-                "message": "Season already ended. Wait for reset."
-            }
-
-        # Check Answer
-        if submission == target:
-            # GRAND PRIZE: 60% of Vault
-            grand_prize = int(vault_bal * 0.60)
-            
-            # Deduct from vault
-            conn.execute('UPDATE vault SET balance = balance - ? WHERE id=1', (grand_prize,))
-            conn.commit() 
-            
-            # Log Victory
-            log_transaction(request.user_id, 0, grand_prize, vault_bal - grand_prize)
-            
-            return {
-                "user_id": request.user_id,
-                "outcome": "GRAND_SOLVE",
-                "payout": grand_prize,
-                "message": "CORRECT. SYSTEM COMPROMISED. SEASON ENDED.",
-                "next_step": "Source code released to public ledger. Season 2 generating..."
+                "active": False,
+                "vault": 0,
+                "winner": {
+                    "user": row[0],
+                    "payout": row[1],
+                    "date": row[2]
+                }
             }
         
-        else:
-            return {
-                "user_id": request.user_id,
-                "outcome": "REJECTED",
-                "payout": 0,
-                "message": "Incorrect formula. The House remains secure."
+        # Fallback if vault is 0 but no grand solve (e.g. drained by players)
+        if vault <= 0:
+             return {
+                "active": False,
+                "vault": 0,
+                "winner": None
             }
-
-@app.get("/leaderboard", response_model=List[LeaderboardEntry])
-def get_leaderboard():
-    with sqlite3.connect(DB_NAME) as conn:
-        # Calculate ROC: (Won - Spent) / Spent
-        rows = conn.execute('''
-            SELECT user_id, total_spent, total_won 
-            FROM players 
-            WHERE total_spent > 0
-            ORDER BY ((CAST(total_won AS FLOAT) - total_spent) / total_spent) DESC
-            LIMIT 5
-        ''').fetchall()
-        
-    leaderboard = []
-    for r in rows:
-        user_id, spent, won = r
-        net_profit = won - spent
-        roi = (net_profit / spent) * 100 if spent > 0 else 0
-        leaderboard.append({
-            "user_id": user_id,
-            "roi_percent": round(roi, 2),
-            "net_profit": net_profit
-        })
-        
-    return leaderboard
-
+            
+        return {"active": True, "vault": vault, "winner": None}
+    
 @app.get("/history")
-def get_public_history():
+def get_history():
     with sqlite3.connect(DB_NAME) as conn:
-        # Return last 50 transactions for the transparency ledger
-        rows = conn.execute('SELECT * FROM transactions ORDER BY id DESC LIMIT 50').fetchall()
+        rows = conn.execute('SELECT * FROM transactions ORDER BY id DESC LIMIT 20').fetchall()
     return {"history": rows}
 
 @app.get("/analytics")
 def get_analytics():
     with sqlite3.connect(DB_NAME) as conn:
-        # 1. Activity
         one_hour_ago = time.time() - 3600
         total_plays_1h = conn.execute('SELECT COUNT(*) FROM transactions WHERE timestamp > ?', (one_hour_ago,)).fetchone()[0]
         total_wins = conn.execute("SELECT COUNT(*) FROM transactions WHERE output_amt > 0").fetchone()[0]
-        
-        # 2. Player Distribution (L1 vs L2)
         l1_players = conn.execute("SELECT COUNT(*) FROM player_wins WHERE l1_wins < 3 AND l1_wins > 0").fetchone()[0]
         l2_players = conn.execute("SELECT COUNT(*) FROM player_wins WHERE l1_wins >= 3").fetchone()[0]
-        
-        # 3. Economy
         vault_bal = conn.execute('SELECT balance FROM vault WHERE id=1').fetchone()[0]
-        avg_payout = conn.execute("SELECT AVG(output_amt) FROM transactions WHERE output_amt > 0").fetchone()[0]
 
     return {
         "metrics_timestamp": time.time(),
-        "activity": { 
-            "plays_last_hour": total_plays_1h, 
-            "total_global_wins": total_wins 
-        },
-        "player_distribution": { 
-            "active_on_layer_1": l1_players, 
-            "active_on_layer_2": l2_players 
-        },
-        "economy": { 
-            "vault_balance": vault_bal, 
-            "average_win_payout": round(avg_payout, 2) if avg_payout else 0 
-        }
+        "activity": { "plays_last_hour": total_plays_1h, "total_global_wins": total_wins },
+        "player_distribution": { "active_on_layer_1": l1_players, "active_on_layer_2": l2_players },
+        "economy": { "vault_balance": vault_bal }
     }
