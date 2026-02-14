@@ -1,17 +1,26 @@
 import sqlite3
-import random
 import time
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple
 
 app = FastAPI(title="Beat the House: Season 1")
 
-# --- CONFIGURATION ---
-DB_NAME = "game.db"
+# --- CONFIGURATION & PERSISTENCE ---
+
+# Check if we are running on Railway (Volume mounted at /app/data)
+# If the folder exists, we use it for the DB. If not, we use local file.
+if os.path.exists("/app/data"):
+    DB_NAME = "/app/data/game.db"
+    print(">>> RUNNING IN PRODUCTION MODE (Persistent Volume)")
+else:
+    DB_NAME = "game.db"
+    print(">>> RUNNING IN LOCAL MODE")
+
+# Game Constants
 SEED_VAULT_AMOUNT = 1000
 DEV_TAX = 0.10
 VAULT_SPLIT = 0.90
@@ -20,11 +29,12 @@ COST_PER_PLAY = 10
 GRAND_SOLVE_ANSWER = "timestamp % 10 == 7 AND volume >= 3"
 
 # --- FRONTEND SETUP ---
-# 1. Create static directory if it doesn't exist
+
+# Create static directory if it doesn't exist (prevents startup errors)
 if not os.path.exists("static"):
     os.makedirs("static")
 
-# 2. Mount the static folder to serve CSS/JS/Images
+# Mount the static folder to serve CSS/JS/Images
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # --- DATABASE INITIALIZATION ---
@@ -155,7 +165,7 @@ def check_win_condition(user_id: str) -> Tuple[bool, str]:
 
 @app.get("/")
 async def read_root():
-    # Serves the Hacker Terminal Interface
+    # Serves the Hacker Terminal Interface (index.html)
     return FileResponse('static/index.html')
 
 @app.post("/play", response_model=PlayResponse)
