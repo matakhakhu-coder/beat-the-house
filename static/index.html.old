@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CHIMERA PROTOCOL // TERMINAL</title>
+    <style>
+        :root { --bg: #0a0a0a; --green: #00ff41; --dim: #008f11; --alert: #ff0055; }
+        body { background-color: var(--bg); color: var(--green); font-family: 'Courier New', monospace; margin: 0; padding: 20px; display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; }
+        a { color: var(--green); text-decoration: none; border-bottom: 1px dashed var(--green); }
+        
+        /* LAYOUT */
+        .header { display: flex; justify-content: space-between; border-bottom: 2px solid var(--dim); padding-bottom: 10px; margin-bottom: 20px; }
+        .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; flex-grow: 1; overflow: hidden; }
+        
+        /* PANELS */
+        .panel { border: 1px solid var(--dim); padding: 10px; display: flex; flex-direction: column; overflow: hidden; }
+        .panel-title { background: var(--dim); color: black; padding: 2px 5px; font-weight: bold; margin: -10px -10px 10px -10px; }
+        
+        /* FEED */
+        #feed { overflow-y: auto; flex-grow: 1; font-size: 14px; }
+        .entry { margin-bottom: 5px; border-left: 2px solid var(--dim); padding-left: 8px; }
+        .entry.win { border-left-color: var(--green); color: #fff; background: rgba(0, 255, 65, 0.1); }
+        .entry.grand { border-left-color: var(--alert); color: var(--alert); font-weight: bold; }
+        .timestamp { color: #666; font-size: 12px; }
+
+        /* CONTROLS */
+        .controls { display: flex; gap: 10px; margin-top: 10px; }
+        input { background: transparent; border: 1px solid var(--dim); color: var(--green); padding: 10px; font-family: inherit; flex-grow: 1; }
+        button { background: var(--dim); color: black; border: none; padding: 10px 20px; cursor: pointer; font-family: inherit; font-weight: bold; }
+        button:hover { background: var(--green); }
+        button.danger { background: var(--alert); color: white; }
+
+        /* ANALYTICS */
+        .metric { margin-bottom: 15px; }
+        .metric-val { font-size: 24px; font-weight: bold; }
+        .metric-label { font-size: 12px; opacity: 0.7; }
+        
+        /* GLITCH EFFECT */
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 1; } }
+        .cursor { animation: blink 1s infinite; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div>SYSTEM: <span id="sys-status">ONLINE</span></div>
+        <div>VAULT: <span id="vault-display">LOADING...</span></div>
+    </div>
+
+    <div class="grid">
+        <div class="panel">
+            <div class="panel-title">LIVE_TRANSACTION_LEDGER</div>
+            <div id="feed">Checking connection...</div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-title">COMMAND_MODULE</div>
+            
+            <div class="metric">
+                <div class="metric-label">CURRENT IDENTITY</div>
+                <div class="metric-val" id="user-id">GUEST_USER</div>
+            </div>
+
+            <div class="controls">
+                <input type="text" id="username" placeholder="SET_IDENTITY (e.g. Player1)">
+                <button onclick="setIdentity()">LOGIN</button>
+            </div>
+            
+            <br>
+            <div class="metric">
+                <div class="metric-label">ACTION</div>
+                <button onclick="playGame()" style="width: 100%; font-size: 1.2em;">> EXECUTE TRANSACTION (Cost: 10)</button>
+                <div id="last-result" style="margin-top: 10px; min-height: 20px; color: var(--green);"></div>
+            </div>
+
+            <br>
+            <div class="metric">
+                <div class="metric-label">GRAND_SOLVE_INPUT</div>
+                <input type="text" id="formula" placeholder="ENTER_ALGORITHM_FORMULA">
+                <button class="danger" onclick="submitSolve()" style="margin-top: 5px; width: 100%;">SUBMIT EXPLOIT</button>
+            </div>
+            
+            <div style="margin-top: auto; font-size: 12px; color: #444;">
+                <a href="/docs" target="_blank">API DOCUMENTATION</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // CONFIG
+        const API_URL = ""; // Relative path
+        let currentUser = "GUEST_" + Math.floor(Math.random() * 1000);
+        document.getElementById("user-id").innerText = currentUser;
+
+        function setIdentity() {
+            const val = document.getElementById("username").value;
+            if(val) { currentUser = val; document.getElementById("user-id").innerText = currentUser; }
+        }
+
+        // CORE ACTIONS
+        async function playGame() {
+            document.getElementById("last-result").innerText = "EXECUTING...";
+            try {
+                const res = await fetch(API_URL + "/play", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ user_id: currentUser })
+                });
+                const data = await res.json();
+                
+                let msg = `[${data.outcome}] ${data.message}`;
+                if (data.payout > 0) msg += ` (+R${data.payout})`;
+                
+                document.getElementById("last-result").innerText = msg;
+                document.getElementById("last-result").style.color = data.outcome === "WIN" ? "var(--green)" : "#666";
+                
+                refreshData();
+            } catch (e) {
+                document.getElementById("last-result").innerText = "CONNECTION_ERROR";
+            }
+        }
+
+        async function submitSolve() {
+            const formula = document.getElementById("formula").value;
+            if(!formula) return;
+            
+            try {
+                const res = await fetch(API_URL + "/submit", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ user_id: currentUser, formula: formula })
+                });
+                const data = await res.json();
+                alert(data.message + "\nPAYOUT: " + data.payout);
+                refreshData();
+            } catch (e) { alert("ERROR SUBMITTING"); }
+        }
+
+        // DATA POLLING
+        async function refreshData() {
+            // 1. Get History
+            const histRes = await fetch(API_URL + "/history");
+            const histData = await histRes.json();
+            
+            const feed = document.getElementById("feed");
+            feed.innerHTML = histData.history.map(tx => {
+                const [id, user, in_amt, out_amt, bal, time] = tx;
+                const isWin = out_amt > 0;
+                const isGrand = in_amt === 0; // Grand solve flag
+                
+                let cls = "entry";
+                if (isWin) cls += " win";
+                if (isGrand) cls += " grand";
+                
+                return `<div class="${cls}">
+                    <span class="timestamp">${new Date(time * 1000).toLocaleTimeString()}</span> 
+                    > <strong>${user}</strong> 
+                    ${isGrand ? "TRIGGERED GRAND SOLVE" : (isWin ? `EXTRACTED R${out_amt}` : "LOST R10")}
+                    <span style="float:right; opacity:0.5">VAULT: ${bal}</span>
+                </div>`;
+            }).join("");
+
+            // 2. Get Vault Balance (from Analytics)
+            const statsRes = await fetch(API_URL + "/analytics");
+            const stats = await statsRes.json();
+            document.getElementById("vault-display").innerText = "R" + stats.economy.vault_balance;
+        }
+
+        // Auto-refresh every 2 seconds
+        setInterval(refreshData, 2000);
+        refreshData();
+    </script>
+</body>
+</html>

@@ -103,4 +103,139 @@ You now have a complete, playable game:
 ✓ Analytics (House can monitor)  
 
 **Next phase: Deploy to the web so real players can access it.**
+## Day 5: Deployment to Railway
 
+- [x] Created requirements.txt with dependencies
+- [x] Created Procfile for Railway
+- [x] Initialized Git and pushed to GitHub
+- [x] Deployed to Railway from GitHub repo
+- [x] Added persistent volume at /app/data
+- [x] Updated main.py to use /app/data/game.db on production
+- [x] Pushed DB persistence code to GitHub
+- [x] Railway auto-redeployed with persistence
+- [x] Tested live game: transactions persisting correctly
+- [x] Vault balance updating in real-time
+
+**Final Status:**
+- SYSTEM: ONLINE (Production)
+- DATABASE: PERSISTENT (SQLite with Railway Volume)
+- FRONTEND: LIVE (Cyberpunk Terminal UI)
+- API: PUBLIC (Available at Railway URL)
+- GAME MECHANICS: FULLY FUNCTIONAL
+
+**Live URL:** https://web-production-05efb.up.railway.app/
+
+**GitHub Repo:** https://github.com/matakhakhu-coder/beat-the-house
+
+**Next Steps (Optional):**
+- Run sniper bot against live server
+- Invite real players to test
+- Monitor /analytics endpoint for player behavior
+- Prepare Season 2 (new algorithm)
+# Beat The House: Complete Execution Log
+
+## PROJECT SUMMARY
+Built and deployed a cryptoeconomic Alternate Reality Game (ARG) 
+in 5 days from concept to production.
+
+## TIMELINE
+
+### Day 1: Core MVC
+- [x] Created project structure (FastAPI + SQLite)
+- [x] Implemented vault system (fractional payouts)
+- [x] Built game loop (play, win, lose)
+- [x] Created transaction ledger
+- [x] Deployed locally and tested
+
+### Day 2: Layered Difficulty
+- [x] Added player_wins table
+- [x] Implemented Layer 1 (timestamp sync)
+- [x] Implemented Layer 2 (volume surge)
+- [x] Tested escalation logic
+- [x] Verified cooldown prevents farming
+
+### Day 3: Grand Solve & Season End
+- [x] Added /submit endpoint
+- [x] Implemented Highlander lock
+- [x] Created hall_of_fame table
+- [x] Tested season end conditions
+
+### Day 4: Frontend Cyberpunk Terminal
+- [x] Created static/index.html
+- [x] Designed dark mode aesthetic
+- [x] Implemented live clock
+- [x] Added timestamp highlighting
+- [x] Integrated all API endpoints
+
+### Day 5: Production Deployment
+- [x] Deployed to Railway.app
+- [x] Set up persistent volume (/app/data)
+- [x] Configured database path for production
+- [x] Tested vault persistence across restarts
+- [x] Verified all endpoints working live
+
+## PHASE 2: COMPLETE SYSTEM OVERHAUL
+- [x] Code audit: Found and fixed 5 critical bugs
+- [x] Two-tier cooldown system (5s play, 120s win)
+- [x] Hybrid payout (MIN/MAX bankruptcy protection)
+- [x] Race condition handling (IMMEDIATE isolation)
+- [x] Boot sequence animation
+- [x] Broadcast ticker with marquee
+- [x] Season end (Legacy Mode) UI
+- [x] Glitch effects on win/loss
+
+## LIVE GAME FEATURES
+
+### Gameplay Mechanics
+- Vault: R1000 initial (fractional extraction)
+- Cost per play: R10 (R9 to vault, R1 to house)
+- Layer 1: Timestamp % 10 == 7 (easy mode, 3 wins to unlock)
+- Layer 2: Volume >= 3 concurrent plays (hard mode, fixed threshold)
+- Win payout: MIN(vault, MAX(20, 3% of vault))
+- Grand Solve: 60% of vault (ends season)
+
+### Systems
+- Play cooldown: 5 seconds (anti-spam)
+- Win cooldown: 120 seconds (anti-farming)
+- Broadcast cooldown: 5 minutes per user
+- Season detection: Automatic via /season/status
+- Database persistence: SQLite with Railway volume
+
+### User Features
+- Live wall clock + Unix digit display
+- Transaction ledger with highlighting
+- Broadcast ticker (unmoderated)
+- Real-time vault balance
+- Leaderboard by ROC
+- Season end state with victor info
+- Glitch effects on wins
+
+## TECHNOLOGY STACK
+- Backend: Python + FastAPI + SQLite
+- Frontend: Vanilla JS + CSS (no frameworks)
+- Hosting: Railway.app (persistent volume)
+- Database: SQLite (file-based, persistent)
+- Design: Cyberpunk terminal aesthetic
+
+## DEPLOYMENT
+- GitHub: https://github.com/matakhakhu-coder/beat-the-house
+- Live: https://web-production-05efb.up.railway.app/
+- Status: STABLE & PRODUCTION-READY
+
+## WHAT'S NEXT?
+- [ ] Soft launch (invite players)
+- [ ] Monitor /analytics for engagement
+- [ ] Stress test Layer 2 coordination
+- [ ] Watch for Grand Solve solution
+- [ ] Prepare Season 2 (different algorithm)
+- [ ] Add wallet system for real money (optional)
+- [ ] Implement Prophet role (prediction betting)
+- [ ] Add Data Detective bounty system
+
+## FINAL STATUS
+Beat the House Season 1 is live and ready for real players.
+The game is fully functional, economically sound, and production-hardened.
+
+**Date Deployed:** February 14, 2026
+**Deployed By:** matakhakhu-coder
+**Live Since:** Day 5, Hour 1
