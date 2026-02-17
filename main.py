@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Tuple, Optional
 
-app = FastAPI(title="Chimera Protocol: The Audit")
+app = FastAPI(title="Beat the House: Season 1 (Restored)")
 
 # Enable CORS for local testing comfort
 app.add_middleware(
@@ -198,25 +198,18 @@ def check_win_condition(conn, user_id: str) -> Tuple[bool, str]:
 @app.get("/")
 async def read_root():
     """
-    The Era Switch: Serves the correct frontend based on the current season.
+    ROOT RESTORED: Serves the Heist (Season 1) by default.
+    Switch logic is kept but ignored for the initial landing to allow bot-led transition.
     """
-    season = get_current_season()
-    
-    if season == 2:
-        # Season 2: The Audit (Red Interface)
-        return FileResponse("audit.html")
-    else:
-        # Season 1: The Heist (Green Interface)
-        # Checks for 'heist.html' first, falls back to 'index.html'
-        if os.path.exists("heist.html"):
-            return FileResponse("heist.html")
-        return FileResponse("index.html")
+    if os.path.exists("heist.html"):
+        return FileResponse("heist.html")
+    return FileResponse("index.html")
 
 @app.get("/api/manifest")
 def get_manifest():
     """
     Serves the Season 2 Audit Data.
-    Only accessible if Season 2 is active.
+    Only accessible if Season 2 is active in the database.
     """
     if get_current_season() < 2:
         return JSONResponse(status_code=403, content={"error": "TIMELINE_LOCKED"})
