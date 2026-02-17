@@ -61,43 +61,63 @@
     let UNLOCKED_IDS = new Set(); 
     
     async function boot() {
-        const res = await fetch('/api/manifest');
-        const data = await res.json();
-        
-        if(data.error) { document.getElementById('rows-output').innerHTML = "<h1>ACCESS DENIED: TIMELINE LOCKED</h1>"; return; }
-        
-        MANIFEST = data.records;
-        document.getElementById('total-count').innerText = MANIFEST.length;
+        try {
+            // Updated fetch with cache-buster to ensure we don't load an empty manifest
+            const res = await fetch('/api/manifest?t=' + Date.now());
+            const data = await res.json();
+            
+            if(data.error) { 
+                document.getElementById('rows-output').innerHTML = "<h1>ACCESS DENIED: TIMELINE LOCKED</h1>"; 
+                return; 
+            }
+            
+            MANIFEST = data.records || [];
+            document.getElementById('total-count').innerText = MANIFEST.length;
 
-        const saved = localStorage.getItem('chimera_s2_unlocks');
-        if(saved) {
-            UNLOCKED_IDS = new Set(JSON.parse(saved));
-        } else {
-            MANIFEST.forEach(r => { if(r.tier === 0) UNLOCKED_IDS.add(r.id); });
+            const saved = localStorage.getItem('chimera_s2_unlocks');
+            if(saved && saved !== "[]") {
+                UNLOCKED_IDS = new Set(JSON.parse(saved));
+            } 
+            
+            // Critical Update: Ensure Tier 0 records (starter data) are always added to the set
+            MANIFEST.forEach(r => { 
+                if(r.tier === 0) UNLOCKED_IDS.add(r.id); 
+            });
+
+            render();
+        } catch (err) {
+            console.error("Boot error:", err);
+            document.getElementById('rows-output').innerHTML = "<h1>SYSTEM ERROR: SYNC FAILED</h1>";
         }
-        render();
     }
 
     function render() {
         const container = document.getElementById('rows-output');
+        if (!MANIFEST.length) {
+            container.innerHTML = "<div>NO RECORDS DETECTED IN MANIFEST</div>";
+            return;
+        }
+
         let html = '';
-        
         MANIFEST.forEach(row => {
             const isUnlocked = UNLOCKED_IDS.has(row.id);
-            let content = row.content;
+            let content = isUnlocked ? row.content : "████████████████████ [REDACTED] ████████";
             
-            if (!isUnlocked) {
-                content = "████████████████████ [REDACTED] ████████";
-            } else {
-                if(row.marginalia) content += ` <br><span style="color:#664444; font-size:0.8em;">// ${row.marginalia}</span>`;
+            if(isUnlocked && row.marginalia) {
+                content += ` <br><span style="color:#664444; font-size:0.8em;">// ${row.marginalia}</span>`;
             }
 
-            html += `<div class="row ${isUnlocked ? 'unlocked' : 'locked'}"><div class="ts">[${row.timestamp}]</div><div class="content">${content}</div></div>`;
+            html += `<div class="row ${isUnlocked ? 'unlocked' : 'locked'}">
+                        <div class="ts">[${row.timestamp}]</div>
+                        <div class="content">${content}</div>
+                     </div>`;
         });
         
         container.innerHTML = html;
         document.getElementById('unlock-count').innerText = UNLOCKED_IDS.size;
         document.getElementById('fill').style.width = (UNLOCKED_IDS.size / MANIFEST.length * 100) + "%";
+        
+        // Persist progress to local storage
         localStorage.setItem('chimera_s2_unlocks', JSON.stringify([...UNLOCKED_IDS]));
     }
 
@@ -105,14 +125,12 @@
         const query = document.getElementById('input-query').value.trim().toLowerCase();
         if(!query) return;
 
-        let hitCount = 0;
         let newUnlocks = false;
-
         MANIFEST.forEach(row => {
-            if (row.keywords && row.keywords.includes(query)) {
+            // Enhanced check: matches query against the keywords array
+            if (row.keywords && row.keywords.some(k => k.toLowerCase() === query)) {
                 if (!UNLOCKED_IDS.has(row.id)) {
                     UNLOCKED_IDS.add(row.id);
-                    hitCount++;
                     newUnlocks = true;
                 }
             }
@@ -120,10 +138,10 @@
 
         if (newUnlocks) {
             render();
-            // alert(`Decryption Successful. ${hitCount} records recovered.`);
         } else {
-            document.getElementById('input-query').style.borderColor = "#555";
-            setTimeout(() => document.getElementById('input-query').style.borderColor = "var(--red)", 200);
+            const input = document.getElementById('input-query');
+            input.style.borderColor = "#555";
+            setTimeout(() => input.style.borderColor = "var(--red)", 200);
         }
         document.getElementById('input-query').value = "";
     }
