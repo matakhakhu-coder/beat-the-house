@@ -198,9 +198,18 @@ def check_win_condition(conn, user_id: str) -> Tuple[bool, str]:
 @app.get("/")
 async def read_root():
     """
-    ROOT RESTORED: Serves the Heist (Season 1) by default.
-    Switch logic is kept but ignored for the initial landing to allow bot-led transition.
+    THE FINAL SWITCH: Now checks the database for the Era Shift.
     """
+    # 1. Ask the Database what time it is
+    season = get_current_season()
+    
+    # 2. If the Bot won (Season 2), serve the Red Audit
+    if season == 2:
+        # BUST THE CACHE: Ensure the browser knows this is new
+        headers = {"Cache-Control": "no-store, must-revalidate"}
+        return FileResponse("audit.html", headers=headers)
+    
+    # 3. Otherwise, keep serving the Green Heist
     if os.path.exists("heist.html"):
         return FileResponse("heist.html")
     return FileResponse("index.html")
