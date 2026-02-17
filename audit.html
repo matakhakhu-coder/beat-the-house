@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SENTINEL // AUDIT</title>
+    <style>
+        :root { --bg: #050505; --red: #ff3333; --dim: #441111; --text: #ccaaaa; }
+        body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; margin: 0; padding: 20px; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        
+        /* HEADER */
+        header { border-bottom: 2px solid var(--red); padding-bottom: 10px; margin-bottom: 20px; display: flex; justify-content: space-between; }
+        h1 { margin: 0; color: var(--red); letter-spacing: 2px; }
+        
+        /* SEARCH BAR */
+        #search-deck { margin-bottom: 20px; display: flex; gap: 10px; }
+        input { background: #000; border: 1px solid var(--red); color: var(--red); padding: 10px; flex-grow: 1; font-family: inherit; font-size: 1.1em; outline: none; }
+        button { background: var(--dim); color: var(--red); border: 1px solid var(--red); padding: 10px 20px; cursor: pointer; font-weight: bold; }
+        button:hover { background: var(--red); color: #000; }
+
+        /* THE GRID */
+        #grid-container { flex-grow: 1; overflow-y: auto; border: 1px solid #222; position: relative; }
+        .row { display: grid; grid-template-columns: 180px 1fr; border-bottom: 1px solid #111; padding: 8px; font-size: 0.9em; }
+        .row:hover { background: #0a0505; }
+        
+        .ts { color: #666; }
+        .content { color: #888; }
+        
+        /* STATES */
+        .row.locked .content { color: #333; background: #111; user-select: none; } 
+        .row.unlocked .content { color: var(--text); }
+        .row.unlocked .ts { color: var(--red); }
+
+        /* PROGRESS */
+        #progress-bar { height: 4px; background: #222; margin-top: 10px; width: 100%; }
+        #fill { height: 100%; background: var(--red); width: 0%; transition: width 0.5s; }
+
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>SENTINEL_AUDIT_V2</h1>
+    <div id="stats">CLEARED: <span id="unlock-count">0</span> / <span id="total-count">0</span></div>
+</header>
+
+<div id="search-deck">
+    <div style="padding: 10px; background: var(--red); color: #000; font-weight: bold;">QUERY:</div>
+    <input type="text" id="input-query" placeholder="ENTER KEYWORD..." onkeypress="handleKey(event)">
+    <button onclick="runSearch()">EXECUTE</button>
+</div>
+
+<div id="grid-container">
+    <div id="rows-output" style="padding:20px;">INITIALIZING SECURE CONNECTION...</div>
+</div>
+
+<div id="progress-bar"><div id="fill"></div></div>
+
+<script>
+    let MANIFEST = [];
+    let UNLOCKED_IDS = new Set(); 
+    
+    async function boot() {
+        const res = await fetch('/api/manifest');
+        const data = await res.json();
+        
+        if(data.error) { document.getElementById('rows-output').innerHTML = "<h1>ACCESS DENIED: TIMELINE LOCKED</h1>"; return; }
+        
+        MANIFEST = data.records;
+        document.getElementById('total-count').innerText = MANIFEST.length;
+
+        const saved = localStorage.getItem('chimera_s2_unlocks');
+        if(saved) {
+            UNLOCKED_IDS = new Set(JSON.parse(saved));
+        } else {
+            MANIFEST.forEach(r => { if(r.tier === 0) UNLOCKED_IDS.add(r.id); });
+        }
+        render();
+    }
+
+    function render() {
+        const container = document.getElementById('rows-output');
+        let html = '';
+        
+        MANIFEST.forEach(row => {
+            const isUnlocked = UNLOCKED_IDS.has(row.id);
+            let content = row.content;
+            
+            if (!isUnlocked) {
+                content = "████████████████████ [REDACTED] ████████";
+            } else {
+                if(row.marginalia) content += ` <br><span style="color:#664444; font-size:0.8em;">// ${row.marginalia}</span>`;
+            }
+
+            html += `<div class="row ${isUnlocked ? 'unlocked' : 'locked'}"><div class="ts">[${row.timestamp}]</div><div class="content">${content}</div></div>`;
+        });
+        
+        container.innerHTML = html;
+        document.getElementById('unlock-count').innerText = UNLOCKED_IDS.size;
+        document.getElementById('fill').style.width = (UNLOCKED_IDS.size / MANIFEST.length * 100) + "%";
+        localStorage.setItem('chimera_s2_unlocks', JSON.stringify([...UNLOCKED_IDS]));
+    }
+
+    function runSearch() {
+        const query = document.getElementById('input-query').value.trim().toLowerCase();
+        if(!query) return;
+
+        let hitCount = 0;
+        let newUnlocks = false;
+
+        MANIFEST.forEach(row => {
+            if (row.keywords && row.keywords.includes(query)) {
+                if (!UNLOCKED_IDS.has(row.id)) {
+                    UNLOCKED_IDS.add(row.id);
+                    hitCount++;
+                    newUnlocks = true;
+                }
+            }
+        });
+
+        if (newUnlocks) {
+            render();
+            // alert(`Decryption Successful. ${hitCount} records recovered.`);
+        } else {
+            document.getElementById('input-query').style.borderColor = "#555";
+            setTimeout(() => document.getElementById('input-query').style.borderColor = "var(--red)", 200);
+        }
+        document.getElementById('input-query').value = "";
+    }
+
+    function handleKey(e) { if(e.key === 'Enter') runSearch(); }
+    boot();
+</script>
+</body>
+</html>
