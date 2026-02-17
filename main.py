@@ -1,6 +1,7 @@
 import sqlite3
 import time
 import os
+import json
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -8,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Tuple, Optional
 
-app = FastAPI(title="Beat the House: Season 1 (Gold)")
+app = FastAPI(title="Chimera Protocol: The Audit")
 
 # Enable CORS for local testing comfort
 app.add_middleware(
@@ -20,6 +21,9 @@ app.add_middleware(
 )
 
 # --- CONFIGURATION ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_FILE = os.path.join(BASE_DIR, "data", "audit_manifest.json")
+
 if os.path.exists("/app/data"):
     DB_NAME = "/app/data/game.db"
     print(">>> PRODUCTION MODE: Persistent Volume")
@@ -44,6 +48,15 @@ def init_db():
     with sqlite3.connect(DB_NAME) as conn:
         c = conn.cursor()
         
+        # 0. System State (The Era Switch)
+        c.execute('''CREATE TABLE IF NOT EXISTS system_state 
+                     (key TEXT PRIMARY KEY, value TEXT)''')
+        
+        # Set default season if new
+        check = c.execute("SELECT value FROM system_state WHERE key='current_season'").fetchone()
+        if not check:
+            c.execute("INSERT INTO system_state (key, value) VALUES ('current_season', '1')")
+
         # 1. Vault
         c.execute('''CREATE TABLE IF NOT EXISTS vault (id INTEGER PRIMARY KEY, balance INTEGER)''')
         c.execute('SELECT count(*) FROM vault')
@@ -72,7 +85,7 @@ def init_db():
         # 6. Hall of Fame
         c.execute('''CREATE TABLE IF NOT EXISTS hall_of_fame 
                      (season_id INTEGER PRIMARY KEY, winner_id TEXT, payout INTEGER, win_date TEXT, method TEXT)''')
-                     
+                      
         # 7. CHAT (NEW - For V2.1 UI)
         c.execute('''CREATE TABLE IF NOT EXISTS chat (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,16 +94,6 @@ def init_db():
                         timestamp REAL
                     )''')
         
-        # MIGRATION HELPER
-        cols = [
-            ("last_win_time", "REAL DEFAULT 0"),
-            ("last_play_time", "REAL DEFAULT 0"),
-            ("last_broadcast_time", "REAL DEFAULT 0")
-        ]
-        for col, dtype in cols:
-            try: c.execute(f"ALTER TABLE players ADD COLUMN {col} {dtype}")
-            except: pass
-
         conn.commit()
 
 init_db()
@@ -127,6 +130,11 @@ def get_vault_balance(conn):
 def update_vault(conn, amount_change):
     conn.execute('UPDATE vault SET balance = balance + ? WHERE id=1', (amount_change,))
     return conn.execute('SELECT balance FROM vault WHERE id=1').fetchone()[0]
+
+def get_current_season():
+    with sqlite3.connect(DB_NAME) as conn:
+        res = conn.execute("SELECT value FROM system_state WHERE key='current_season'").fetchone()
+        return int(res[0]) if res else 1
 
 def calculate_hybrid_payout(current_vault):
     if current_vault <= 0: return 0
@@ -189,7 +197,45 @@ def check_win_condition(conn, user_id: str) -> Tuple[bool, str]:
 
 @app.get("/")
 async def read_root():
-    return FileResponse('index.html')
+    """
+    The Era Switch: Serves the correct frontend based on the current season.
+    """
+    season = get_current_season()
+    
+    if season == 2:
+        # Season 2: The Audit (Red Interface)
+        return FileResponse("audit.html")
+    else:
+        # Season 1: The Heist (Green Interface)
+        # Checks for 'heist.html' first, falls back to 'index.html'
+        if os.path.exists("heist.html"):
+            return FileResponse("heist.html")
+        return FileResponse("index.html")
+
+@app.get("/api/manifest")
+def get_manifest():
+    """
+    Serves the Season 2 Audit Data.
+    Only accessible if Season 2 is active.
+    """
+    if get_current_season() < 2:
+        return JSONResponse(status_code=403, content={"error": "TIMELINE_LOCKED"})
+    
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            data = json.load(f)
+        return data
+    return JSONResponse(status_code=404, content={"error": "MANIFEST_MISSING"})
+
+@app.post("/admin/trigger_s2")
+def trigger_season_2():
+    """
+    DEBUG TOOL: Forces the Era Shift.
+    """
+    with sqlite3.connect(DB_NAME) as conn:
+        conn.execute("INSERT OR REPLACE INTO system_state (key, value) VALUES ('current_season', '2')")
+        conn.commit()
+    return {"status": "ERA_SHIFT_COMPLETE", "mode": "AUDIT"}
 
 @app.post("/play", response_model=PlayResponse)
 def play_game(request: PlayRequest):
@@ -244,7 +290,7 @@ def play_game(request: PlayRequest):
             "season_active": new_vault > 0
         }
 
-# --- CHAT ENDPOINTS (REQUIRED FOR V2.1 UI) ---
+# --- CHAT ENDPOINTS ---
 @app.get("/discuss")
 def get_chat():
     with sqlite3.connect(DB_NAME) as conn:
@@ -262,11 +308,9 @@ def post_chat(msg: ChatMessage):
         conn.commit()
     return {"status": "SENT", "message": "PACKET_INJECTED"}
 
-# --- BROADCAST ENDPOINTS (LEGACY) ---
+# --- BROADCAST ENDPOINTS ---
 @app.post("/broadcast")
 def send_broadcast(req: BroadcastRequest):
-    # Reuse chat logic for broadcast to keep logs unified if desired, 
-    # but keeping separate to respect your legacy code structure
     msg = req.message[:60].upper()
     with sqlite3.connect(DB_NAME) as conn:
         row = conn.execute('SELECT last_broadcast_time FROM players WHERE user_id=?', (req.user_id,)).fetchone()
@@ -286,7 +330,6 @@ def send_broadcast(req: BroadcastRequest):
 @app.get("/broadcast/feed")
 def get_broadcasts():
     with sqlite3.connect(DB_NAME) as conn:
-        # Pull from broadcasts table
         rows = conn.execute('''SELECT user_id, message FROM broadcasts 
                                ORDER BY id DESC LIMIT 1''').fetchall()
         if not rows:
@@ -303,8 +346,6 @@ def grand_solve(req: SubmitRequest):
             vault = get_vault_balance(conn)
             if vault <= 0:
                 winner = conn.execute('SELECT winner_id FROM hall_of_fame WHERE season_id=1').fetchone()
-                outcome = "LOCKED" if winner else "ERROR_SEASON_CLOSED"
-                log_attempt(req.user_id, submission, outcome)
                 if winner: return {"outcome": "LOCKED", "message": f"ALREADY CLAIMED BY {winner[0]}"}
                 return {"outcome": "ERROR", "message": "SEASON CLOSED"}
 
@@ -313,11 +354,18 @@ def grand_solve(req: SubmitRequest):
                 conn.execute('''INSERT INTO hall_of_fame (season_id, winner_id, payout, win_date, method)
                                 VALUES (1, ?, ?, ?, 'GRAND_SOLVE')''', 
                                 (req.user_id, prize, time.ctime()))
+                
+                # Drain Vault
                 conn.execute('UPDATE vault SET balance = 0 WHERE id=1')
                 log_transaction(conn, req.user_id, 0, prize, 0)
+                
+                # TRIGGER SEASON 2
+                conn.execute("INSERT OR REPLACE INTO system_state (key, value) VALUES ('current_season', '2')")
+                
                 conn.commit()
                 log_attempt(req.user_id, submission, "GRAND_SOLVE_WIN")
-                return {"outcome": "GRAND_SOLVE", "payout": prize, "message": "SYSTEM COMPROMISED. SEASON ENDED."}
+                
+                return {"outcome": "GRAND_SOLVE", "payout": prize, "message": "SYSTEM COMPROMISED. ERA SHIFT INITIATED."}
             else:
                 log_attempt(req.user_id, submission, "REJECTED")
                 return {"outcome": "REJECTED", "message": "INVALID KEY"}
@@ -344,7 +392,8 @@ def get_season_status():
             "status": status,
             "vault_balance": vault,
             "winner": winner_data,
-            "active": (vault > 0 and not row)
+            "active": (vault > 0 and not row),
+            "season": get_current_season()
         }
     
 @app.get("/history")
@@ -352,13 +401,11 @@ def get_history():
     with sqlite3.connect(DB_NAME) as conn:
         rows = conn.execute('SELECT user_id, input_amt, output_amt, vault_balance, timestamp FROM transactions ORDER BY id DESC LIMIT 20').fetchall()
     
-    # FORMAT FIX: Return a List of Dicts, NOT {"history": ...}
-    # This matches what your V2.1 Frontend expects.
     formatted = []
     for r in rows:
         formatted.append({
             "user": r[0],
-            "amt": r[2] if r[2] > 0 else -r[1], # Net change
+            "amt": r[2] if r[2] > 0 else -r[1],
             "time": r[4]
         })
     return formatted

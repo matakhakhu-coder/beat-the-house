@@ -1,0 +1,45 @@
+{
+  "meta": {
+    "title": "THE_WEEK_OF_THE_FIRE",
+    "total_records": 1000,
+    "era": "SEASON_2_AUDIT"
+  },
+  "records": [
+    {
+      "id": "R-001",
+      "timestamp": "2026-02-14 08:00:00",
+      "tier": 0,
+      "source": "GRID_MONITOR",
+      "content": "CRITICAL: Thermal runaway detected in Sector 4 Transformer.",
+      "marginalia": "Admin: The sensors didn't fail. They were ignored.",
+      "keywords": [] 
+    },
+    {
+      "id": "R-002",
+      "timestamp": "2026-02-14 08:05:00",
+      "tier": 1,
+      "source": "AUTO_TICKETING",
+      "content": "Ticket #4492 generated. Priority: HIGH. Assigned to: UNIT_77.",
+      "marginalia": null,
+      "keywords": ["ticket #4492", "unit_77", "thermal"]
+    },
+    {
+      "id": "R-003",
+      "timestamp": "2026-02-14 08:15:00",
+      "tier": 2,
+      "source": "EMAIL_LOG",
+      "content": "RE: Ticket #4492 - Denied. 'Budget Constraint Override' applied by VANE_OFFICE.",
+      "marginalia": "Overfitter: There it is. The kill switch.",
+      "keywords": ["vane_office", "budget", "override"]
+    },
+    {
+      "id": "R-004",
+      "timestamp": "2026-02-14 09:00:00",
+      "tier": 3,
+      "source": "ENCRYPTED_MEMO",
+      "content": "PROJECT CHIMERA requires total power allocation. Divert cooling reserves immediately.",
+      "marginalia": "Unknown: They cooked the grid to feed the AI.",
+      "keywords": ["chimera", "project chimera"]
+    }
+  ]
+}
