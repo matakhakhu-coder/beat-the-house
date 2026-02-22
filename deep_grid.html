@@ -3,83 +3,479 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CHIMERA // DEEP GRID</title>
+    <title>CHIMERA PROTOCOL // DEEP GRID</title>
     <style>
-        :root { --bg: #0a0500; --text: #ffaa00; --accent: #ff4400; --dim: #331100; }
-        body { background-color: var(--bg); color: var(--text); font-family: 'Courier New', monospace; margin: 0; padding: 20px; text-shadow: 0 0 2px var(--accent); }
-        .glitch-anim { animation: flicker 2s infinite alternate; }
+        :root { 
+            --bg: #0a0300; 
+            --amber: #ff5500; 
+            --dim-amber: #441100; 
+            --alert: #ff0000; 
+            --text: #ffcc88; 
+            --scanline: rgba(255, 85, 0, 0.03);
+        }
+        
+        * { box-sizing: border-box; }
+        
+        body { 
+            background-color: var(--bg); 
+            color: var(--text); 
+            font-family: 'Courier New', monospace; 
+            margin: 0; padding: 0; 
+            height: 100vh; 
+            overflow: hidden; 
+            display: flex; 
+            flex-direction: column; 
+        }
+
+        /* CRT EFFECTS (Red/Orange Tinted for Deep Grid) */
+        body::after {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(255, 85, 0, 0.02), rgba(0, 0, 0, 0.06));
+            z-index: 100;
+            background-size: 100% 2px, 3px 100%;
+            pointer-events: none;
+        }
+
+        /* BOOT SEQUENCE */
+        #boot-screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; z-index: 999;
+            display: flex; align-items: center; justify-content: center;
+            flex-direction: column;
+            font-size: 1.5em; color: var(--amber);
+        }
+        .boot-line { opacity: 0; animation: fadeIn 0.1s forwards; margin-bottom: 10px; text-shadow: 0 0 10px var(--amber); }
+
+        /* MARQUEE TICKER */
+        #marquee-container {
+            background: var(--alert);
+            color: #000;
+            height: 28px;
+            overflow: hidden;
+            white-space: nowrap;
+            position: relative;
+            font-weight: bold;
+            font-size: 0.9em;
+            display: flex; align-items: center;
+            border-bottom: 2px solid var(--dim-amber);
+            z-index: 50;
+        }
+        #marquee-content {
+            display: inline-block;
+            padding-left: 100%;
+            animation: marquee 20s linear infinite;
+        }
+        .msg-tag { background: #000; color: var(--alert); padding: 0 5px; margin-right: 5px; font-weight: 900; }
+
+        /* MAIN LAYOUT (With Flicker) */
+        #app-container { 
+            opacity: 0; transition: opacity 1s; display: flex; flex-direction: column; height: 100%; padding: 15px; z-index: 10; 
+            animation: flicker 4s infinite alternate; /* Deep Grid Unstable Flicker */
+        }
+        
+        .header { 
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px solid var(--amber); padding-bottom: 10px; margin-bottom: 15px; 
+        }
+        
+        /* LIVE CLOCK */
+        .clock-group { text-align: right; }
+        .unix-digit { 
+            font-size: 1.5em; font-weight: bold; color: #421; 
+            display: inline-block; width: 30px; text-align: center;
+            background: #110000; border: 1px solid #421; margin-left: 10px;
+        }
+        .unix-digit.active { color: #fff; background: var(--amber); box-shadow: 0 0 15px var(--amber); }
+
+        /* GRID */
+        .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; flex-grow: 1; overflow: hidden; }
+        
+        .panel { 
+            border: 1px solid var(--dim-amber); 
+            background: rgba(20, 5, 0, 0.4); 
+            display: flex; flex-direction: column; 
+            position: relative;
+        }
+        .panel-header { 
+            background: var(--dim-amber); color: #ffcc88; 
+            padding: 2px 8px; font-weight: bold; font-size: 0.8em; letter-spacing: 2px;
+        }
+
+        /* LEDGER */
+        #ledger { overflow-y: auto; flex-grow: 1; padding: 10px; font-size: 13px; }
+        .entry { display: flex; justify-content: space-between; border-bottom: 1px dashed #310; padding: 4px 0; }
+        .entry.win { color: var(--amber); text-shadow: 0 0 3px var(--amber); background: rgba(255, 85, 0, 0.05); }
+        .entry.loss { color: #522; }
+        .entry.grand { color: var(--alert); font-weight: bold; animation: pulse 1s infinite; }
+        .ts-hl { font-weight: bold; color: #fff; }
+
+        /* CONTROLS */
+        .controls { padding: 15px; display: flex; flex-direction: column; gap: 15px; height: 100%; overflow-y: auto; }
+        
+        .metric-box { display: flex; justify-content: space-between; font-size: 1.2em; font-weight: bold; border-bottom: 1px solid #421; padding-bottom: 5px; }
+        
+        input { 
+            background: #000; border: 1px solid var(--dim-amber); color: var(--amber); 
+            padding: 10px; width: 100%; font-family: inherit; outline: none; margin-bottom: 5px;
+        }
+        input:focus { border-color: var(--amber); box-shadow: 0 0 10px var(--dim-amber); }
+
+        button { 
+            background: var(--dim-amber); color: #ffaa66; border: none; 
+            padding: 12px; width: 100%; cursor: pointer; font-family: inherit; 
+            font-weight: bold; text-transform: uppercase; transition: all 0.2s; 
+        }
+        button:hover { background: var(--amber); color: #000; box-shadow: 0 0 15px var(--amber); }
+        button.danger { background: #500; color: #faa; }
+        button.danger:hover { background: var(--alert); color: #fff; box-shadow: 0 0 15px var(--alert); }
+
+        /* CHAT MODULE */
+        #chat-module {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid #421;
+            background: #050100;
+            padding: 5px;
+            margin-top: 10px;
+            min-height: 150px;
+        }
+        #chat-history {
+            flex-grow: 1;
+            overflow-y: auto;
+            font-size: 0.8em;
+            margin-bottom: 5px;
+            color: #a65;
+        }
+        .chat-msg { margin-bottom: 2px; word-break: break-word; }
+        .chat-user { font-weight: bold; }
+        
+        /* SEASON END STATE (LEGACY MODE) */
+        #memorial-panel { 
+            display: none; text-align: center; color: var(--text); padding: 20px; 
+            border: 2px solid var(--alert); background: rgba(50, 0, 0, 0.2); height: 100%;
+            flex-direction: column; justify-content: center; gap: 20px;
+        }
+        .winner-name { font-size: 2em; color: var(--alert); text-shadow: 0 0 10px var(--alert); }
+        .code-reveal { font-family: monospace; background: #000; padding: 10px; border: 1px dashed var(--alert); color: #fff; }
+
+        /* ANIMATIONS */
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes marquee { 0% { transform: translate(0, 0); } 100% { transform: translate(-100%, 0); } }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        
         @keyframes flicker {
             0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% { opacity: 1; }
-            20%, 24%, 55% { opacity: 0.5; }
+            20%, 24%, 55% { opacity: 0.85; }
         }
-        .container { max-width: 800px; margin: 0 auto; border: 2px solid var(--accent); padding: 20px; background: rgba(255, 68, 0, 0.05); }
-        h1 { border-bottom: 2px solid var(--accent); padding-bottom: 10px; margin-top: 0; }
-        .hud { display: flex; justify-content: space-between; margin-bottom: 20px; font-weight: bold; background: var(--dim); padding: 10px; }
-        .btn { background: var(--bg); color: var(--text); border: 1px solid var(--text); padding: 10px 20px; cursor: pointer; font-family: inherit; font-size: 1.1em; transition: 0.2s; }
-        .btn:hover { background: var(--text); color: var(--bg); }
-        .btn-play { background: var(--dim); border-color: var(--accent); color: var(--accent); font-weight: bold; width: 100%; padding: 15px; margin: 10px 0; }
-        .btn-play:hover { background: var(--accent); color: var(--bg); }
-        .log-box { height: 300px; overflow-y: auto; border: 1px solid var(--dim); padding: 10px; font-size: 0.9em; display: flex; flex-direction: column-reverse; background: #000; }
-        .log-entry { margin: 4px 0; border-left: 2px solid var(--dim); padding-left: 10px; }
-        .log-entry.win { color: #fff; border-left-color: var(--text); background: var(--dim); }
-        input[type="text"] { width: 100%; padding: 10px; box-sizing: border-box; background: #000; border: 1px solid var(--accent); color: var(--text); font-family: inherit; margin-bottom: 10px; }
+
+        .glitch { animation: shake 0.5s; filter: hue-rotate(-90deg); }
+        .red-flash { animation: shake 0.2s; border: 1px solid var(--alert); box-shadow: inset 0 0 50px rgba(255,0,0,0.4); }
+        @keyframes shake { 
+            0% { transform: translate(1px, 1px) rotate(0deg); } 
+            25% { transform: translate(-1px, -2px) rotate(-1deg); } 
+            50% { transform: translate(-3px, 0px) rotate(1deg); } 
+            75% { transform: translate(3px, 2px) rotate(0deg); } 
+            100% { transform: translate(1px, -2px) rotate(-1deg); } 
+        }
+
     </style>
 </head>
 <body>
-    <div class="container glitch-anim">
-        <h1>CHIMERA // DEEP GRID [LEVEL 3]</h1>
-        <div class="hud">
-            <div>VAULT: R<span id="vault-bal">---</span></div>
-            <div id="status-text" style="color:var(--accent);">CONNECTION UNSTABLE</div>
+
+    <div id="boot-screen"></div>
+
+    <div id="marquee-container">
+        <div id="marquee-content">// DEEP_GRID_ACTIVE // NETWORK_UNSTABLE // MULTIPLE_INJECTIONS_REQUIRED // WARNING: VOLUME_SCALING_DETECTED //</div>
+    </div>
+
+    <div id="app-container">
+        
+        <div class="header">
+            <div>
+                <div style="font-size: 1.2em; font-weight: bold; color: var(--amber); text-shadow: 0 0 5px var(--amber);">CHIMERA PROTOCOL // DEEP GRID</div>
+                <div style="font-size: 0.8em; color: var(--alert);">v3.0.0 // UNSTABLE // CONNECTION COMPROMISED</div>
+            </div>
+            <div class="clock-group">
+                <span id="wall-clock">00:00:00.00</span>
+                <span id="unix-digit" class="unix-digit">-</span>
+            </div>
         </div>
 
-        <input type="text" id="userid" placeholder="ENTER IDENTIFIER (e.g. Unit_77)" value="Unit_77">
-        <button class="btn btn-play" onclick="play()">ATTEMPT EXTRACTION [R10]</button>
-        
-        <h3 style="margin-top:20px; border-bottom:1px solid var(--dim);">NETWORK TRAFFIC</h3>
-        <div class="log-box" id="history"></div>
+        <div class="grid">
+            <div class="panel">
+                <div class="panel-header">DEEP_GRID_LEDGER [SECTOR 4]</div>
+                <div id="ledger">Establishing unstable connection...</div>
+            </div>
+
+            <div class="panel">
+                <div class="panel-header">OVERRIDE_DECK</div>
+                
+                <div id="active-controls" class="controls">
+                    <div class="metric-box">
+                        <span id="display-user">GUEST</span>
+                        <span id="display-vault" style="color: var(--amber);">R----</span>
+                    </div>
+
+                    <div>
+                        <input type="text" id="username-input" placeholder="SET_IDENTITY (e.g. Unit_77)">
+                        <button onclick="setIdentity()" style="padding: 5px; font-size: 0.8em;">FORCE LOGIN</button>
+                    </div>
+
+                    <div style="border: 1px dashed var(--alert); padding: 10px; margin-top: 10px; background: rgba(255,0,0,0.05);">
+                        <div style="font-size: 0.7em; margin-bottom: 5px; color: var(--alert);">INJECTION_VECTOR (COST: R10)</div>
+                        <button onclick="playGame()" id="btn-play">ATTEMPT EXTRACTION</button>
+                        <div id="result-msg" style="margin-top: 5px; height: 1.2em; text-align: center; font-size: 0.8em;">AWAITING SIGNAL</div>
+                    </div>
+
+                    <div id="chat-module">
+                        <div style="border-bottom: 1px solid #421; margin-bottom: 5px; font-size: 0.7em; color: var(--amber);">// DEAD_DROP_CHANNEL</div>
+                        <div id="chat-history">
+                            <div class="chat-msg">Decrypting...</div>
+                        </div>
+                        <div style="display: flex; gap: 5px;">
+                            <input type="text" id="chat-input" placeholder="TRANSMIT..." style="margin: 0; padding: 5px;">
+                            <button onclick="sendChat()" style="width: auto; padding: 5px 10px;">></button>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: auto; border-top: 2px solid var(--alert); padding-top: 10px;">
+                        <div style="color: var(--alert); font-size: 0.7em; margin-bottom: 5px;">CORE_SYSTEM_BREACH</div>
+                        <input type="text" id="solve-input" placeholder="ENTER_ALGORITHM_KEY" style="border-color: #f00;">
+                        <button class="danger" onclick="submitSolve()">TRIGGER BREACH</button>
+                    </div>
+                </div>
+
+                <div id="memorial-panel">
+                    <div style="font-size: 0.8em; letter-spacing: 3px; color: var(--amber);">DEEP GRID BREACHED</div>
+                    <div class="winner-name" id="mem-winner">UNKNOWN</div>
+                    <div>TOTAL EXTRACTION: <span id="mem-payout" style="color: var(--amber); font-weight: bold;">R0</span></div>
+                    <div style="margin-top: 20px;">THE SOURCE CODE:</div>
+                    <div class="code-reveal">timestamp % 10 == 0<br>AND<br>volume >= 5</div>
+                </div>
+
+            </div>
+        </div>
     </div>
 
     <script>
-        async function fetchState() {
-            try {
-                let res = await fetch('/season/status');
-                let data = await res.json();
-                document.getElementById('vault-bal').innerText = data.vault_balance;
-            } catch (e) {}
-            
-            try {
-                let hRes = await fetch('/history');
-                let hData = await hRes.json();
-                let histHtml = '';
-                hData.forEach(r => {
-                    let d = new Date(r.time * 1000).toLocaleTimeString();
-                    let amt = r.amt > 0 ? `+R${r.amt}` : `-R${Math.abs(r.amt)}`;
-                    let c = r.amt > 0 ? 'win' : '';
-                    histHtml += `<div class="log-entry ${c}">[${d}] ${r.user} | ${amt}</div>`;
-                });
-                document.getElementById('history').innerHTML = histHtml;
-            } catch (e) {}
+        // CONFIG
+        const API_URL = ""; 
+        
+        // Identity Recovery
+        let currentUser = localStorage.getItem('chimera_user');
+        if (!currentUser) {
+            currentUser = "Unit_" + Math.floor(Math.random() * 99);
+            localStorage.setItem('chimera_user', currentUser);
         }
+        
+        let isSeasonActive = true;
 
-        async function play() {
-            let uid = document.getElementById('userid').value.trim() || 'Anonymous';
-            try {
-                let res = await fetch('/play', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({user_id: uid})
-                });
-                let data = await res.json();
-                fetchState();
-                if(data.outcome === "WIN") { alert(`EXTRACTION SUCCESS: R${data.payout}\n${data.message}`); }
-            } catch (e) {
-                alert("NETWORK INTERFERENCE DETECTED.");
+        // --- 1. BOOT SEQUENCE (Corrupted) ---
+        const bootLines = ["INITIALIZING TRAPDOOR...", "REROUTING TO SECTOR 4...", "WARNING: CONNECTION UNSTABLE", "DEEP GRID ACTIVE."];
+        async function runBoot() {
+            const screen = document.getElementById('boot-screen');
+            for (let line of bootLines) {
+                const div = document.createElement('div');
+                div.className = 'boot-line';
+                div.innerText = line;
+                screen.appendChild(div);
+                if (line.includes("WARNING")) {
+                    document.body.classList.add("glitch");
+                    setTimeout(() => document.body.classList.remove("glitch"), 300);
+                }
+                await new Promise(r => setTimeout(r, 600));
+            }
+            await new Promise(r => setTimeout(r, 500));
+            screen.style.opacity = 0;
+            document.getElementById('app-container').style.opacity = 1;
+            setTimeout(() => screen.remove(), 1000);
+        }
+        runBoot();
+
+        // --- 2. LIVE CLOCK (Hard Mode Sync) ---
+        function updateClock() {
+            const now = new Date();
+            document.getElementById("wall-clock").innerText = now.toLocaleTimeString('en-GB') + "." + String(now.getMilliseconds()).padStart(3,'0').substring(0,2);
+            
+            const unixSec = Math.floor(now.getTime() / 1000);
+            const digit = String(unixSec).slice(-1);
+            const digitEl = document.getElementById("unix-digit");
+            
+            digitEl.innerText = digit;
+            // HARD MODE: Trigger is now exactly 0
+            if (digit === "0") {
+                digitEl.classList.add("active");
+            } else {
+                digitEl.classList.remove("active");
+            }
+            requestAnimationFrame(updateClock);
+        }
+        updateClock();
+
+        // --- 3. CORE ACTIONS ---
+        function setIdentity() {
+            const val = document.getElementById("username-input").value;
+            if(val) { 
+                currentUser = val.replace(/[^a-zA-Z0-9_]/g, '').substring(0, 15);
+                localStorage.setItem('chimera_user', currentUser);
+                document.getElementById("display-user").innerText = currentUser;
+                document.getElementById("username-input").value = "";
             }
         }
 
-        setInterval(fetchState, 2000);
-        fetchState();
+        async function playGame() {
+            if(!isSeasonActive) return;
+            const resBox = document.getElementById("result-msg");
+            resBox.innerText = "INJECTING...";
+
+            try {
+                const res = await fetch(API_URL + "/play", {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ user_id: currentUser })
+                });
+                const data = await res.json();
+
+                if (data.outcome === "WIN") {
+                    resBox.innerText = `EXTRACTION: +R${data.payout}`;
+                    resBox.style.color = "var(--amber)";
+                    document.body.classList.add("glitch");
+                    setTimeout(() => document.body.classList.remove("glitch"), 500);
+                } else {
+                    resBox.innerText = data.message.substring(0, 25);
+                    resBox.style.color = "var(--alert)";
+                    document.body.classList.add("red-flash");
+                    setTimeout(() => document.body.classList.remove("red-flash"), 200);
+                }
+                refreshData();
+            } catch(e) { resBox.innerText = "CONNECTION SEVERED"; }
+        }
+
+        // --- 4. CHAT SYSTEM ---
+        async function loadChat() {
+            try {
+                const res = await fetch(API_URL + "/discuss");
+                const msgs = await res.json();
+                const chatBox = document.getElementById('chat-history');
+                const shouldScroll = chatBox.scrollHeight - chatBox.scrollTop === chatBox.clientHeight;
+
+                chatBox.innerHTML = msgs.map(m => {
+                    const time = new Date(m.time * 1000).toLocaleTimeString([], {hour12: false, hour:'2-digit', minute:'2-digit'});
+                    const color = m.user === currentUser ? "var(--amber)" : "#aa6644";
+                    return `<div class="chat-msg">
+                        <span style="color:#631">[${time}]</span>
+                        <span class="chat-user" style="color:${color}">${m.user}:</span>
+                        <span style="color:#ffcc88">${m.text}</span>
+                    </div>`;
+                }).join("");
+
+                if(shouldScroll) chatBox.scrollTop = chatBox.scrollHeight;
+            } catch(e) {}
+        }
+
+        async function sendChat() {
+            const input = document.getElementById('chat-input');
+            const txt = input.value.trim();
+            if(!txt) return;
+            input.value = "...";
+            
+            await fetch(API_URL + "/discuss", {
+                method: "POST", headers: {"Content-Type":"application/json"},
+                body: JSON.stringify({user_id: currentUser, message: txt})
+            });
+            input.value = "";
+            loadChat();
+        }
+
+        document.getElementById('chat-input').addEventListener('keypress', (e) => {
+            if(e.key==='Enter') sendChat();
+        });
+
+        async function submitSolve() {
+            const formula = document.getElementById("solve-input").value;
+            if(!formula) return;
+            try {
+                const res = await fetch(API_URL + "/submit", {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ user_id: currentUser, formula: formula })
+                });
+                const data = await res.json();
+                if(data.outcome === "GRAND_SOLVE") {
+                    alert("DEEP GRID BREACHED.");
+                    location.reload();
+                } else {
+                    alert(data.message);
+                }
+            } catch(e) {}
+        }
+
+        // --- 5. DATA POLLING ---
+        async function refreshData() {
+            const statusRes = await fetch(API_URL + "/season/status");
+            const status = await statusRes.json();
+            
+            isSeasonActive = !status.status.startsWith("LOCKED");
+            
+            if (isSeasonActive) {
+                document.getElementById("display-vault").innerText = "R" + status.vault_balance;
+            } else {
+                document.getElementById("active-controls").style.display = "none";
+                document.getElementById("memorial-panel").style.display = "flex";
+                document.getElementById("mem-payout").innerText = "R" + status.vault_balance;
+                if(status.winner) {
+                    document.getElementById("mem-winner").innerText = status.winner.user;
+                }
+            }
+
+            const histRes = await fetch(API_URL + "/history");
+            const histData = await histRes.json();
+            
+            const ledger = document.getElementById("ledger");
+            ledger.innerHTML = histData.map(tx => {
+                const date = new Date(tx.time * 1000);
+                const timeStr = date.toLocaleTimeString('en-GB');
+                const sec = timeStr.split(':')[2];
+                const isWin = tx.amt > 0;
+                
+                let cls = isWin ? "entry win" : "entry loss";
+                let text = isWin ? `PULLED R${tx.amt}` : `FEE R10`;
+                
+                // Highlight the seconds (useful for tracking the '0' condition)
+                const displayTime = timeStr.replace(sec, `<span class="ts-hl">${sec}</span>`);
+
+                return `<div class="${cls}">
+                    <span style="opacity:0.6; font-size:0.9em; width:80px;">${displayTime}</span>
+                    <span style="width:100px; font-weight:bold;">${tx.user}</span>
+                    <span style="text-align:right; flex-grow:1;">${text}</span>
+                </div>`;
+            }).join("");
+        }
+
+        async function updateTicker() {
+            try {
+                const res = await fetch(API_URL + "/broadcast/feed");
+                const data = await res.json();
+                const html = `<span class="msg-tag">[!]</span> ${data.message}`;
+                const tape = document.getElementById("marquee-content");
+                if(tape.innerHTML !== html && data.message !== "SYSTEM IDLE") {
+                    tape.innerHTML = html;
+                }
+            } catch(e) {}
+        }
+
+        // Init loops
+        setInterval(refreshData, 2000);
+        setInterval(loadChat, 2000);
+        setInterval(updateTicker, 5000);
+        
+        refreshData();
+        loadChat();
+        updateTicker();
+        document.getElementById("display-user").innerText = currentUser;
+
     </script>
 </body>
 </html>
