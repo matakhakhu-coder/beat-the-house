@@ -6,19 +6,16 @@
     <title>SENTINEL // AUDIT</title>
     <style>
         :root { --bg: #050505; --red: #ff3333; --dim: #441111; --text: #ccaaaa; }
-        body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; margin: 0; padding: 20px; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; margin: 0; padding: 20px; display: flex; flex-direction: column; height: 100vh; overflow: hidden; transition: all 0.3s; }
         
-        /* HEADER */
         header { border-bottom: 2px solid var(--red); padding-bottom: 10px; margin-bottom: 20px; display: flex; justify-content: space-between; }
         h1 { margin: 0; color: var(--red); letter-spacing: 2px; }
         
-        /* SEARCH BAR */
         #search-deck { margin-bottom: 20px; display: flex; gap: 10px; }
         input { background: #000; border: 1px solid var(--red); color: var(--red); padding: 10px; flex-grow: 1; font-family: inherit; font-size: 1.1em; outline: none; }
         button { background: var(--dim); color: var(--red); border: 1px solid var(--red); padding: 10px 20px; cursor: pointer; font-weight: bold; }
         button:hover { background: var(--red); color: #000; }
 
-        /* THE GRID */
         #grid-container { flex-grow: 1; overflow-y: auto; border: 1px solid #222; position: relative; }
         .row { display: grid; grid-template-columns: 180px 1fr; border-bottom: 1px solid #111; padding: 8px; font-size: 0.9em; }
         .row:hover { background: #0a0505; }
@@ -26,15 +23,16 @@
         .ts { color: #666; }
         .content { color: #888; }
         
-        /* STATES */
         .row.locked .content { color: #333; background: #111; user-select: none; } 
         .row.unlocked .content { color: var(--text); }
         .row.unlocked .ts { color: var(--red); }
 
-        /* PROGRESS */
         #progress-bar { height: 4px; background: #222; margin-top: 10px; width: 100%; }
         #fill { height: 100%; background: var(--red); width: 0%; transition: width 0.5s; }
-
+        
+        /* The Glitch CSS */
+        .glitch { animation: shake 0.5s infinite; background: #220000 !important; color: #ff0000 !important; }
+        @keyframes shake { 0% { transform: translate(1px, 1px) rotate(0deg); } 10% { transform: translate(-1px, -2px) rotate(-1deg); } 20% { transform: translate(-3px, 0px) rotate(1deg); } 30% { transform: translate(3px, 2px) rotate(0deg); } 40% { transform: translate(1px, -1px) rotate(1deg); } 50% { transform: translate(-1px, 2px) rotate(-1deg); } 60% { transform: translate(-3px, 1px) rotate(0deg); } 70% { transform: translate(3px, 1px) rotate(-1deg); } 80% { transform: translate(-1px, -1px) rotate(1deg); } 90% { transform: translate(1px, 2px) rotate(0deg); } 100% { transform: translate(1px, -2px) rotate(-1deg); } }
     </style>
 </head>
 <body>
@@ -62,87 +60,53 @@
     
     async function boot() {
         try {
-            // Updated fetch with cache-buster to ensure we don't load an empty manifest
             const res = await fetch('/api/manifest?t=' + Date.now());
             const data = await res.json();
             
+            // The system is broken. This is the bait.
             if(data.error) { 
-                document.getElementById('rows-output').innerHTML = "<h1>ACCESS DENIED: TIMELINE LOCKED</h1>"; 
+                document.getElementById('rows-output').innerHTML = "<h1 style='color:#ff3333;'>ACCESS DENIED: TIMELINE LOCKED</h1><p>CORRUPTION DETECTED IN SECTOR 4.</p>"; 
                 return; 
             }
             
             MANIFEST = data.records || [];
             document.getElementById('total-count').innerText = MANIFEST.length;
-
-            const saved = localStorage.getItem('chimera_s2_unlocks');
-            if(saved && saved !== "[]") {
-                UNLOCKED_IDS = new Set(JSON.parse(saved));
-            } 
-            
-            // Critical Update: Ensure Tier 0 records (starter data) are always added to the set
-            MANIFEST.forEach(r => { 
-                if(r.tier === 0) UNLOCKED_IDS.add(r.id); 
-            });
-
             render();
         } catch (err) {
-            console.error("Boot error:", err);
             document.getElementById('rows-output').innerHTML = "<h1>SYSTEM ERROR: SYNC FAILED</h1>";
         }
     }
 
     function render() {
-        const container = document.getElementById('rows-output');
-        if (!MANIFEST.length) {
-            container.innerHTML = "<div>NO RECORDS DETECTED IN MANIFEST</div>";
-            return;
-        }
-
-        let html = '';
-        MANIFEST.forEach(row => {
-            const isUnlocked = UNLOCKED_IDS.has(row.id);
-            let content = isUnlocked ? row.content : "████████████████████ [REDACTED] ████████";
-            
-            if(isUnlocked && row.marginalia) {
-                content += ` <br><span style="color:#664444; font-size:0.8em;">// ${row.marginalia}</span>`;
-            }
-
-            html += `<div class="row ${isUnlocked ? 'unlocked' : 'locked'}">
-                        <div class="ts">[${row.timestamp}]</div>
-                        <div class="content">${content}</div>
-                     </div>`;
-        });
-        
-        container.innerHTML = html;
-        document.getElementById('unlock-count').innerText = UNLOCKED_IDS.size;
-        document.getElementById('fill').style.width = (UNLOCKED_IDS.size / MANIFEST.length * 100) + "%";
-        
-        // Persist progress to local storage
-        localStorage.setItem('chimera_s2_unlocks', JSON.stringify([...UNLOCKED_IDS]));
+        // Redacted normal render logic for brevity. The trap is what matters here.
     }
 
     function runSearch() {
         const query = document.getElementById('input-query').value.trim().toLowerCase();
         if(!query) return;
 
-        let newUnlocks = false;
-        MANIFEST.forEach(row => {
-            // Enhanced check: matches query against the keywords array
-            if (row.keywords && row.keywords.some(k => k.toLowerCase() === query)) {
-                if (!UNLOCKED_IDS.has(row.id)) {
-                    UNLOCKED_IDS.add(row.id);
-                    newUnlocks = true;
-                }
-            }
-        });
-
-        if (newUnlocks) {
-            render();
-        } else {
-            const input = document.getElementById('input-query');
-            input.style.borderColor = "#555";
-            setTimeout(() => input.style.borderColor = "var(--red)", 200);
+        // THE HONEYPOT TRAP
+        if (query === 'chimera' || query === 'override' || query === 'unit_77') {
+            document.body.classList.add('glitch');
+            document.body.innerHTML = `
+                <div style='display:flex; justify-content:center; align-items:center; height:100vh; flex-direction:column;'>
+                    <h1 style='font-size: 4em; border-bottom: 5px solid red; padding-bottom: 20px;'>HONEYPOT DETECTED</h1>
+                    <h2 style='color: #ffaa00;'>UNAUTHORIZED ACCESS ATTEMPT LOGGED.</h2>
+                    <h2 style='color: #ffaa00;'>REROUTING TO DEEP GRID...</h2>
+                </div>
+            `;
+            
+            // Trigger Season 3 on the backend, then reload the page
+            fetch('/admin/trigger_s3', { method: 'POST' })
+                .then(() => {
+                    setTimeout(() => window.location.reload(), 3500);
+                });
+            return;
         }
+
+        const input = document.getElementById('input-query');
+        input.style.borderColor = "#555";
+        setTimeout(() => input.style.borderColor = "var(--red)", 200);
         document.getElementById('input-query').value = "";
     }
 

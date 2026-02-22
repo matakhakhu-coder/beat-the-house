@@ -35,6 +35,7 @@ else:
 SEED_VAULT_AMOUNT = 1000
 COST_PER_PLAY = 10
 GRAND_SOLVE_ANSWER = "timestamp % 10 == 7 AND volume >= 3"
+DEEP_GRID_SOLVE_ANSWER = "timestamp % 10 == 0 AND volume >= 5" # SEASON 3 HARD MODE
 
 # Tuning
 LAYER2_THRESHOLD = 3         # Concurrent plays required
@@ -163,6 +164,12 @@ def log_attempt(user_id, formula, outcome):
 # --- GAME LOGIC ---
 
 def check_win_condition(conn, user_id: str) -> Tuple[bool, str]:
+    season = get_current_season()
+    
+    # HARD MODE SEASON 3 SCALING
+    target_digit = '0' if season == 3 else '7'
+    vol_threshold = 5 if season == 3 else LAYER2_THRESHOLD
+
     # 1. WIN COOLDOWN
     row = conn.execute('SELECT last_win_time FROM players WHERE user_id=?', (user_id,)).fetchone()
     last_win = row[0] if row else 0
@@ -172,7 +179,7 @@ def check_win_condition(conn, user_id: str) -> Tuple[bool, str]:
 
     # 2. TIME CHECK (Layer 1)
     current_time = int(time.time())
-    if str(current_time)[-1] != '7':
+    if str(current_time)[-1] != target_digit:
         return False, "SIGNAL_MISMATCH"
 
     # 3. DIFFICULTY CHECK
@@ -188,10 +195,10 @@ def check_win_condition(conn, user_id: str) -> Tuple[bool, str]:
     volume = conn.execute('SELECT COUNT(*) FROM transactions WHERE timestamp > ?', 
                           (time.time() - 10,)).fetchone()[0]
     
-    if volume >= LAYER2_THRESHOLD:
+    if volume >= vol_threshold:
         return True, "ENTROPY_SURGE_CONFIRMED"
     
-    return False, f"ERR_ENTROPY_INSUFFICIENT (Current: {volume}/{LAYER2_THRESHOLD})"
+    return False, f"ERR_ENTROPY_INSUFFICIENT (Current: {volume}/{vol_threshold})"
 
 # --- ENDPOINTS ---
 
@@ -200,19 +207,22 @@ async def read_root():
     """
     THE FINAL SWITCH: Now checks the database for the Era Shift.
     """
-    # 1. Ask the Database what time it is
     season = get_current_season()
+    headers = {"Cache-Control": "no-store, must-revalidate"}
     
-    # 2. If the Bot won (Season 2), serve the Red Audit
+    # Season 3: The Deep Grid
+    if season == 3:
+        if os.path.exists("deep_grid.html"):
+            return FileResponse("deep_grid.html", headers=headers)
+            
+    # Season 2: The Audit
     if season == 2:
-        # BUST THE CACHE: Ensure the browser knows this is new
-        headers = {"Cache-Control": "no-store, must-revalidate"}
         return FileResponse("audit.html", headers=headers)
     
-    # 3. Otherwise, keep serving the Green Heist
+    # Season 1: The Green Heist
     if os.path.exists("heist.html"):
-        return FileResponse("heist.html")
-    return FileResponse("index.html")
+        return FileResponse("heist.html", headers=headers)
+    return FileResponse("index.html", headers=headers)
 
 @app.get("/api/manifest")
 def get_manifest():
@@ -238,6 +248,23 @@ def trigger_season_2():
         conn.execute("INSERT OR REPLACE INTO system_state (key, value) VALUES ('current_season', '2')")
         conn.commit()
     return {"status": "ERA_SHIFT_COMPLETE", "mode": "AUDIT"}
+
+@app.post("/admin/trigger_s3")
+def trigger_season_3():
+    """
+    THE TRAPDOOR: Activates the Deep Grid. Refills the vault to bait the players back in.
+    """
+    with sqlite3.connect(DB_NAME) as conn:
+        conn.execute("INSERT OR REPLACE INTO system_state (key, value) VALUES ('current_season', '3')")
+        # The Vane Office refills the bait
+        conn.execute("UPDATE vault SET balance = 5000 WHERE id = 1")
+        # Wipe the slate clean
+        conn.execute("DELETE FROM hall_of_fame")
+        conn.execute("DELETE FROM transactions")
+        conn.execute("DELETE FROM players")
+        conn.execute("DELETE FROM player_wins")
+        conn.commit()
+    return {"status": "REROUTED_TO_DEEP_GRID", "mode": "DEEP_GRID"}
 
 @app.post("/play", response_model=PlayResponse)
 def play_game(request: PlayRequest):
@@ -341,28 +368,30 @@ def get_broadcasts():
 @app.post("/submit")
 def grand_solve(req: SubmitRequest):
     submission = " ".join(req.formula.split()).lower()
-    target = " ".join(GRAND_SOLVE_ANSWER.split()).lower()
+    season = get_current_season()
+    target = " ".join(DEEP_GRID_SOLVE_ANSWER.split() if season == 3 else GRAND_SOLVE_ANSWER.split()).lower()
     
     with sqlite3.connect(DB_NAME, isolation_level="IMMEDIATE") as conn:
         try:
             vault = get_vault_balance(conn)
             if vault <= 0:
-                winner = conn.execute('SELECT winner_id FROM hall_of_fame WHERE season_id=1').fetchone()
+                winner = conn.execute('SELECT winner_id FROM hall_of_fame WHERE season_id=?', (season,)).fetchone()
                 if winner: return {"outcome": "LOCKED", "message": f"ALREADY CLAIMED BY {winner[0]}"}
                 return {"outcome": "ERROR", "message": "SEASON CLOSED"}
 
             if submission == target:
                 prize = int(vault * 0.60)
                 conn.execute('''INSERT INTO hall_of_fame (season_id, winner_id, payout, win_date, method)
-                                VALUES (1, ?, ?, ?, 'GRAND_SOLVE')''', 
-                                (req.user_id, prize, time.ctime()))
+                                VALUES (?, ?, ?, ?, 'GRAND_SOLVE')''', 
+                                (season, req.user_id, prize, time.ctime()))
                 
                 # Drain Vault
                 conn.execute('UPDATE vault SET balance = 0 WHERE id=1')
                 log_transaction(conn, req.user_id, 0, prize, 0)
                 
-                # TRIGGER SEASON 2
-                conn.execute("INSERT OR REPLACE INTO system_state (key, value) VALUES ('current_season', '2')")
+                # TRIGGER NEXT SEASON (1 -> 2, 3 -> 4)
+                next_season = 2 if season == 1 else 4
+                conn.execute("INSERT OR REPLACE INTO system_state (key, value) VALUES ('current_season', ?)", (str(next_season),))
                 
                 conn.commit()
                 log_attempt(req.user_id, submission, "GRAND_SOLVE_WIN")
@@ -378,9 +407,10 @@ def grand_solve(req: SubmitRequest):
 
 @app.get("/season/status")
 def get_season_status():
+    season = get_current_season()
     with sqlite3.connect(DB_NAME) as conn:
         vault = get_vault_balance(conn)
-        row = conn.execute('SELECT winner_id, payout, win_date FROM hall_of_fame WHERE season_id=1').fetchone()
+        row = conn.execute('SELECT winner_id, payout, win_date FROM hall_of_fame WHERE season_id=?', (season,)).fetchone()
         
         status = "ACTIVE"
         winner_data = None
@@ -395,7 +425,7 @@ def get_season_status():
             "vault_balance": vault,
             "winner": winner_data,
             "active": (vault > 0 and not row),
-            "season": get_current_season()
+            "season": season
         }
     
 @app.get("/history")

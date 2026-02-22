@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CHIMERA // DEEP GRID</title>
+    <style>
+        :root { --bg: #0a0500; --text: #ffaa00; --accent: #ff4400; --dim: #331100; }
+        body { background-color: var(--bg); color: var(--text); font-family: 'Courier New', monospace; margin: 0; padding: 20px; text-shadow: 0 0 2px var(--accent); }
+        .glitch-anim { animation: flicker 2s infinite alternate; }
+        @keyframes flicker {
+            0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% { opacity: 1; }
+            20%, 24%, 55% { opacity: 0.5; }
+        }
+        .container { max-width: 800px; margin: 0 auto; border: 2px solid var(--accent); padding: 20px; background: rgba(255, 68, 0, 0.05); }
+        h1 { border-bottom: 2px solid var(--accent); padding-bottom: 10px; margin-top: 0; }
+        .hud { display: flex; justify-content: space-between; margin-bottom: 20px; font-weight: bold; background: var(--dim); padding: 10px; }
+        .btn { background: var(--bg); color: var(--text); border: 1px solid var(--text); padding: 10px 20px; cursor: pointer; font-family: inherit; font-size: 1.1em; transition: 0.2s; }
+        .btn:hover { background: var(--text); color: var(--bg); }
+        .btn-play { background: var(--dim); border-color: var(--accent); color: var(--accent); font-weight: bold; width: 100%; padding: 15px; margin: 10px 0; }
+        .btn-play:hover { background: var(--accent); color: var(--bg); }
+        .log-box { height: 300px; overflow-y: auto; border: 1px solid var(--dim); padding: 10px; font-size: 0.9em; display: flex; flex-direction: column-reverse; background: #000; }
+        .log-entry { margin: 4px 0; border-left: 2px solid var(--dim); padding-left: 10px; }
+        .log-entry.win { color: #fff; border-left-color: var(--text); background: var(--dim); }
+        input[type="text"] { width: 100%; padding: 10px; box-sizing: border-box; background: #000; border: 1px solid var(--accent); color: var(--text); font-family: inherit; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container glitch-anim">
+        <h1>CHIMERA // DEEP GRID [LEVEL 3]</h1>
+        <div class="hud">
+            <div>VAULT: R<span id="vault-bal">---</span></div>
+            <div id="status-text" style="color:var(--accent);">CONNECTION UNSTABLE</div>
+        </div>
+
+        <input type="text" id="userid" placeholder="ENTER IDENTIFIER (e.g. Unit_77)" value="Unit_77">
+        <button class="btn btn-play" onclick="play()">ATTEMPT EXTRACTION [R10]</button>
+        
+        <h3 style="margin-top:20px; border-bottom:1px solid var(--dim);">NETWORK TRAFFIC</h3>
+        <div class="log-box" id="history"></div>
+    </div>
+
+    <script>
+        async function fetchState() {
+            try {
+                let res = await fetch('/season/status');
+                let data = await res.json();
+                document.getElementById('vault-bal').innerText = data.vault_balance;
+            } catch (e) {}
+            
+            try {
+                let hRes = await fetch('/history');
+                let hData = await hRes.json();
+                let histHtml = '';
+                hData.forEach(r => {
+                    let d = new Date(r.time * 1000).toLocaleTimeString();
+                    let amt = r.amt > 0 ? `+R${r.amt}` : `-R${Math.abs(r.amt)}`;
+                    let c = r.amt > 0 ? 'win' : '';
+                    histHtml += `<div class="log-entry ${c}">[${d}] ${r.user} | ${amt}</div>`;
+                });
+                document.getElementById('history').innerHTML = histHtml;
+            } catch (e) {}
+        }
+
+        async function play() {
+            let uid = document.getElementById('userid').value.trim() || 'Anonymous';
+            try {
+                let res = await fetch('/play', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({user_id: uid})
+                });
+                let data = await res.json();
+                fetchState();
+                if(data.outcome === "WIN") { alert(`EXTRACTION SUCCESS: R${data.payout}\n${data.message}`); }
+            } catch (e) {
+                alert("NETWORK INTERFERENCE DETECTED.");
+            }
+        }
+
+        setInterval(fetchState, 2000);
+        fetchState();
+    </script>
+</body>
+</html>
